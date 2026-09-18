@@ -17,7 +17,7 @@
 | Сборка | Gradle Wrapper 9.1.0 или новее в совместимой стабильной ветке 9.x; Groovy DSL |
 | Хранилище | PostgreSQL, одна БД, фиксированный стабильный тег Docker image |
 | Доступ к БД | Spring JDBC, параметризованный SQL, JdbcClient/JdbcTemplate |
-| Миграции | Liquibase, YAML master changelog и последовательные changesets |
+| Миграции | Liquibase: исторический YAML master сохранён; новые formatted SQL и XML-индексы по docs/database.md |
 | Формат событий | JSONB, явный реестр типов, сериализация средствами выбранной версии Spring Boot |
 | Локальный запуск | Docker Compose для PostgreSQL; приложение через Gradle или bootJar |
 
@@ -44,16 +44,19 @@
 
 ## 4. Организация кода
 
-Один модуль и пакет `com.example.wallet` с подпакетами `domain`, `application`, `infrastructure`, `api`.
+Один модуль и базовый пакет `com.example.wallet`. Актуальная структура описана в
+[docs/architecture.md](docs/architecture.md): `controller`, `dto.request`, `dto.response`,
+`service`, `service.impl`, `service.model`, `domain`, `domain.command`, `domain.event`,
+`repository`, `repository.jdbc`, `serialization`, `exception.domain`, `exception.api`, `config`.
 
 | Компонент | Ответственность |
 |---|---|
 | Wallet | Проверить команду и вернуть события; применить факт; восстановить состояние |
 | WalletCommand / WalletEvent | Явные типы команд и неизменяемых событий |
-| WalletService | Организовать обработку команды и чтение, обеспечить транзакцию |
+| WalletService / WalletServiceImpl | Контракт сценариев / обработка команды и чтения, транзакционная граница |
 | EventStore | Загрузить поток и атомарно добавить события при ожидаемой версии |
 | JdbcEventStore | SQL, сравнение версий, запись и чтение JSONB |
-| CommandReceiptRepository | Найти/сохранить результат успешной команды |
+| CommandReceiptRepository | Найти через find / вставить через insert результат успешной команды |
 | EventSerializer | Стабильное имя типа + schemaVersion ↔ конкретный Java record |
 | WalletController | HTTP, DTO и вызов сценариев |
 | ApiExceptionHandler | Единый формат ошибок ProblemDetail |
@@ -106,7 +109,7 @@ Fingerprint включает тип команды, walletId и все норм�
 
 ## 6. Атомарность и конкуренция
 
-Использовать READ COMMITTED и явную границу транзакции в application-слое. Реализация может использовать TransactionTemplate, чтобы rollback и обработка конфликта были хорошо видны.
+Использовать READ COMMITTED и явную границу транзакции в реализации прикладного сервиса (`service.impl`). Реализация может использовать TransactionTemplate, чтобы rollback и обработка конфликта были хорошо видны.
 
 Порядок выполнения:
 

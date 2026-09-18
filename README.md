@@ -93,26 +93,27 @@ docker compose stop postgres
 
 ## Как изучать код
 
-1. [WalletCommand](src/main/java/com/example/wallet/domain/WalletCommand.java) и
-   [WalletEvent](src/main/java/com/example/wallet/domain/WalletEvent.java) — намерения и факты.
+1. [WalletCommand](src/main/java/com/example/wallet/domain/command/WalletCommand.java) и
+   [WalletEvent](src/main/java/com/example/wallet/domain/event/WalletEvent.java) — намерения и факты.
 2. [Wallet](src/main/java/com/example/wallet/domain/Wallet.java) — `decide`, `apply`, `rehydrate`.
    `decide` проверяет новую команду, не меняя агрегат; `apply` меняет состояние фактом;
    `rehydrate` создаёт новый объект и последовательно применяет прошлые факты.
-3. [WalletService](src/main/java/com/example/wallet/application/WalletService.java) — полный сценарий,
+3. [WalletService](src/main/java/com/example/wallet/service/WalletService.java) — прикладной контракт;
+   [WalletServiceImpl](src/main/java/com/example/wallet/service/impl/WalletServiceImpl.java) — полный сценарий,
    commit до ответа, rollback до повторного чтения receipt, GET через replay.
-4. [EventStore](src/main/java/com/example/wallet/application/EventStore.java) и
-   [JdbcEventStore](src/main/java/com/example/wallet/infrastructure/JdbcEventStore.java) — граница
+4. [EventStore](src/main/java/com/example/wallet/repository/EventStore.java) и
+   [JdbcEventStore](src/main/java/com/example/wallet/repository/jdbc/JdbcEventStore.java) — граница
    хранения, SQL одного снимка, проверка непрерывности и атомарный CAS.
-5. [CommandFingerprint](src/main/java/com/example/wallet/application/CommandFingerprint.java) и
-   [JdbcCommandReceiptRepository](src/main/java/com/example/wallet/infrastructure/JdbcCommandReceiptRepository.java)
+5. [CommandFingerprint](src/main/java/com/example/wallet/service/CommandFingerprint.java) и
+   [JdbcCommandReceiptRepository](src/main/java/com/example/wallet/repository/jdbc/JdbcCommandReceiptRepository.java)
    — каноническое содержание команды и постоянный первоначальный ответ.
-6. [EventSerializer](src/main/java/com/example/wallet/infrastructure/EventSerializer.java) — явный
+6. [EventSerializer](src/main/java/com/example/wallet/serialization/EventSerializer.java) — явный
    реестр имён, schemaVersion=1 и строгая проверка payload. Используется Jackson 3 из BOM Boot 4.
-7. [WalletController](src/main/java/com/example/wallet/api/WalletController.java),
-   [WalletRequests](src/main/java/com/example/wallet/api/WalletRequests.java),
-   [ApiExceptionHandler](src/main/java/com/example/wallet/api/ApiExceptionHandler.java) — REST,
-   DTO/валидация и ProblemDetail. [UuidWebConfiguration](src/main/java/com/example/wallet/api/UuidWebConfiguration.java)
-   отвергает сокращённые UUID; [WalletConfiguration](src/main/java/com/example/wallet/infrastructure/WalletConfiguration.java)
+7. [WalletController](src/main/java/com/example/wallet/controller/WalletController.java),
+   [MoneyRequestDto](src/main/java/com/example/wallet/dto/request/MoneyRequestDto.java),
+   [ApiExceptionHandler](src/main/java/com/example/wallet/exception/api/ApiExceptionHandler.java) — REST,
+   DTO/валидация и ProblemDetail. [UuidWebConfiguration](src/main/java/com/example/wallet/config/UuidWebConfiguration.java)
+   отвергает сокращённые UUID; [WalletConfiguration](src/main/java/com/example/wallet/config/WalletConfiguration.java)
    задаёт строгий JSON и внедряемый Clock.
 8. [Миграции](src/main/resources/db/changelog/001-wallet.sql) — таблицы, ограничения и комментарии PostgreSQL.
 
@@ -120,6 +121,39 @@ docker compose stop postgres
 Исходный `src/Main.java` сохранён вне стандартного source set Gradle.
 Домен не зависит от Spring, JDBC, Jackson или HTTP. `WalletState` — неизменяемый результат
 сценария, не отдельная проекция или самостоятельно обновляемое хранилище баланса.
+
+## Структура после рефакторинга
+
+Все пакеты расположены под `com.example.wallet`:
+
+| Пакет | Ответственность |
+|---|---|
+| `controller` | REST и зависимость от интерфейса WalletService |
+| `dto.request`, `dto.response` | HTTP records с прежними JSON-полями |
+| `service`, `service.impl` | Контракт сценариев и реализация транзакционной границы |
+| `service.model` | WalletState, CommandReceipt, StoredEvent и EventPage |
+| `domain`, `domain.command`, `domain.event` | Агрегат, намерения и факты |
+| `repository`, `repository.jdbc` | Контракты хранения и параметризованный JDBC |
+| `serialization` | Реестр стабильных имён и JSON событий |
+| `exception.domain`, `exception.api` | Чистые Java-исключения и ProblemDetail |
+| `config` | Clock, строгий JSON и преобразование UUID |
+
+[WalletResponseDto](src/main/java/com/example/wallet/dto/response/WalletResponseDto.java) и
+[EventPageResponseDto](src/main/java/com/example/wallet/dto/response/EventPageResponseDto.java)
+отображают готовые результаты сервиса для HTTP. Репозитории не используют HTTP DTO:
+JSON receipt по-прежнему кодирует WalletState с прежними полями.
+CorruptHistoryException остаётся чистым Java-исключением в `exception.domain`, поскольку
+его также выбрасывает Wallet при обнаружении недопустимой истории.
+
+Контракт receipt — `find`/`insert`. Отсутствие результата передаётся через Optional без
+промежуточного null. После отказа write.execute уже завершил rollback; повторный findReceipt
+открывает новую транзакцию чтения. Запись receipt остаётся внутри транзакции события.
+INFO о выполненной команде пишется после commit, повтор receipt отмечается только на DEBUG.
+
+При рефакторинге схема не менялась. Исторические файлы
+`db/changelog/db.changelog-master.yaml` и `db/changelog/001-wallet.sql` сохранены вместе
+с путями, порядком и содержимым changeset. Следующие реальные изменения схемы оформляются
+по [database.md](docs/database.md); фиктивной миграции для переноса Java-классов нет.
 
 ## События, таблицы и транзакция
 
@@ -286,7 +320,7 @@ WHERE command_id = '22222222-2222-4222-8222-222222222222'::uuid;
 Нет snapshots, проекций, очередей, кэша, переводов, авторизации, UI или upcasters.
 Миграции форматов событий и оптимизация replay оставлены будущим этапам.
 
-Фактически выполнены компиляция и сборка `./gradlew bootJar` на JDK 25.0.3;
+На этапе первоначальной реализации были выполнены компиляция и сборка `./gradlew bootJar` на JDK 25.0.3;
 обычный запуск собранного JAR с PostgreSQL 17.11, три успешных changeset Liquibase
 и запуск Tomcat на 8080. После этого приложение и контейнер остановлены, volume сохранён.
 На предыдущем этапе запуск блокировала сеть Docker; теперь для запуска использован временный
@@ -298,3 +332,11 @@ Compose override вне репозитория: host network, PostgreSQL на `1
 задачи `test`, `check` и полный `build` не выполнялись. Сборка и старт с миграциями
 не подтверждают поведение API, гонок, идемпотентности и replay; автоматическая
 проверка поведения остаётся за рамками этой работы.
+
+
+При текущем рефакторинге выполнена сборка `./gradlew bootJar`, просмотр импортов,
+локальных ссылок, транзакционных связей и неизменности миграций. Ошибок инвариантов
+Event Sourcing при чтении кода не обнаружено; бизнес-поведение не изменялось.
+Запуск приложения и обращение к БД в рамках рефакторинга не выполнялись.
+Тесты по запросу пользователя не создавались и не запускались. Конкурентное поведение
+и HTTP-контракт проверялись только чтением кода, без выполнения сценариев.

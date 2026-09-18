@@ -200,6 +200,27 @@ README после реализации должен содержать:
 
 ## 11. Правила оформления и рефакторинга
 
-Дополнительно действуют [code-style.md](code-style.md), [checkstyle-rules.md](checkstyle-rules.md), [database.md](database.md), [api-guidelines.md](api-guidelines.md), [code-quality.md](code-quality.md), [logging.md](logging.md), [security.md](security.md) и корневой AGENTS.md.
+Дополнительно действуют [code-style.md](code-style.md), [checkstyle-rules.md](checkstyle-rules.md), [database.md](database.md), [api-guidelines.md](api-guidelines.md), [code-quality.md](code-quality.md), [logging.md](logging.md) и корневой AGENTS.md.
 
 Сервисные интерфейсы и отдельные директории controller/exception — обязательное решение пользователя. Бизнес-правила при этом остаются в Wallet. Миграции — исключительно Liquibase; правила формата новых файлов не требуют переписывать уже применённые.
+
+
+## 12. Результат рефакторинга структуры
+
+Контроллер зависит от интерфейса `service.WalletService`; реализация —
+`service.impl.WalletServiceImpl`. HTTP records разделены на `dto.request` и `dto.response`,
+прикладные результаты остаются в `service.model`. Доменные исключения находятся в
+`exception.domain`, глобальный advice — в `exception.api`.
+
+Контракты хранения перенесены в `repository`, JDBC — в `repository.jdbc`, сериализатор —
+в `serialization`, конфигурации — в `config`. Команды и события разделены на
+`domain.command` и `domain.event`. Старых дублирующих компонентов нет.
+
+findReceipt возвращает Optional, а контракт записи receipt называется insert.
+Граница READ COMMITTED/REQUIRES_NEW, CAS, атомарность события и receipt, чтение после rollback
+сохранены. Java-переименования не изменяют fingerprint, event_type, schema_version или JSON.
+HTTP DTO не используются как формат хранения receipt.
+
+Новых таблиц не требуется. Исторические пути и содержимое YAML/SQL changelog не изменялись.
+Сборка bootJar выполнена; тесты и API-сценарии не создавались и не запускались.
+Обычный запуск приложения в рамках этого рефакторинга не выполнялся.
