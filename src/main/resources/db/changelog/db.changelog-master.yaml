@@ -1,0 +1,5 @@
+# Master только подключает последовательные миграции; применённые changesets не изменяются.
+databaseChangeLog:
+  - include:
+      file: 001-wallet.sql
+      relativeToChangelogFile: true
