@@ -71,4 +71,14 @@
 
 ## Что не добавлять
 
-Axon, JPA/Hibernate, Spring Data ради имени Repository, MapStruct, Lombok, CQRS-инфраструктуру, Kafka, outbox, Saga, Temporal, UI, snapshots и кэш не вводить. Не менять существующий HTTP-контракт или события ради переименования Java-классов. При рефакторинге сохранить стабильные event_type и schema_version.
+Axon, JPA/Hibernate, Spring Data ради имени Repository, MapStruct, Lombok, CQRS-инфраструктуру, Kafka, outbox, Saga, Temporal, snapshots и кэш не вводить. Не менять существующий HTTP-контракт или события ради переименования Java-классов. При рефакторинге сохранить стабильные event_type и schema_version.
+
+## Angular UI
+
+В `frontend` размещён отдельный локальный Angular-клиент существующего API. Он не меняет
+Java-слои, транзакции или модель хранения. `WalletApiService` отвечает за HTTP и проверку
+ответов; standalone components разделяют выбор, текущее состояние, операции, историю,
+исторический просмотр и панель последней команды. `AppComponent` координирует экран через signals.
+Reactive forms используются для ввода. Java-пары интерфейс/Impl на frontend не переносятся.
+Кошельки не перечисляются через новый endpoint: «Недавно открытые» — только UUID в localStorage.
+Точное описание границ клиента — [frontend.md](frontend.md).

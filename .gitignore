@@ -46,3 +46,9 @@ secrets/
 
 # Включая ротированные журналы приложения.
 /logs/
+
+### Angular UI ###
+/frontend/node_modules/
+/frontend/.angular/
+/frontend/dist/
+/frontend/out-tsc/

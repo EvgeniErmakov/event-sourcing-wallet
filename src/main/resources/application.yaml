@@ -1,9 +1,12 @@
+server:
+  port: 28741
+
 spring:
   application:
     name: event-sourcing-wallet
   datasource:
     # Значения по умолчанию предназначены только для локального обучения.
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/wallet}
+    url: ${DB_URL:jdbc:postgresql://127.0.0.1:28742/wallet}
     username: ${DB_USERNAME:wallet}
     password: ${DB_PASSWORD:wallet}
   liquibase:

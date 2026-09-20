@@ -1,0 +1,46 @@
+<a class="skip-link" href="#workspace">Перейти к кошельку</a>
+<header class="topbar">
+    <div class="brand"><span class="brand-icon" aria-hidden="true">W<span></span></span>
+        <span>Кошелёк <span class="brand-divider">/</span> <span class="brand-subtitle">Event Sourcing</span></span>
+    </div>
+    <span class="local-label"><span aria-hidden="true"></span> Локальная лаборатория</span>
+</header>
+<main id="workspace">
+    <div class="page-heading">
+        <div><p class="eyebrow">Команда → событие → состояние</p><h1>У каждого изменения есть история.</h1>
+            <p class="subtitle">Управляйте кошельком и наблюдайте, как события формируют его состояние.</p></div>
+        <span class="outline-label">RUB · Event store</span>
+    </div>
+    @if (storageMessage()) { <p class="notice warning" role="status">{{ storageMessage() }}</p> }
+    @if (uncertain()) {
+        <div class="notice warning" role="alert">Результат последней команды неизвестен. Новые команды временно отключены.
+            <a href="#last-operation">Повторите сохранённый запрос</a>, чтобы не выполнить операцию дважды.</div>
+    }
+    <div class="workspace-grid">
+        <aside class="sidebar">
+            <app-wallet-selector [selected]="selected()" [recent]="recent()" [createDisabled]="createDisabled()"
+                (create)="create()" (open)="open($event)" />
+            <div class="learning-note"><span class="note-symbol" aria-hidden="true">≡</span>
+                <div><h3>Баланс — результат истории</h3><p>Сервер читает события по порядку и восстанавливает кошелёк.
+                    Отдельной таблицы текущих балансов нет.</p></div>
+            </div>
+        </aside>
+        <div class="main-column">
+            <app-wallet-state [selected]="selected()" [wallet]="wallet()" [loading]="stateLoading()"
+                [error]="stateError()" [busy]="busy()" (refresh)="refresh()" />
+            <div class="actions-grid">
+                <app-wallet-operations [wallet]="wallet()" [disabled]="operationsDisabled()" [busy]="busy()"
+                    [blockedReason]="blockedReason()" [error]="operationError()" [message]="operationMessage()"
+                    [needsRefresh]="needsRefresh()" (money)="performMoney($event)" (close)="close()" (refresh)="refresh()" />
+                <app-historical-state [walletId]="selected()" />
+            </div>
+            <app-event-history [selected]="selected()" [events]="events()" [loading]="historyLoading()"
+                [loaded]="historyLoaded()" [hasMore]="historyHasMore()" [error]="historyError()" [busy]="busy()"
+                (more)="loadHistory()" (retry)="loadHistory()" />
+            <app-last-operation id="last-operation" [operation]="lastOperation()" [busy]="busy()" (repeat)="repeat()" />
+        </div>
+    </div>
+    <footer>Учебный интерфейс · Данные загружаются из вашего Spring Boot API
+        <span>Точные суммы до 90 071 992 547 409,91 ₽ · версии до 9 007 199 254 740 991</span>
+    </footer>
+</main>
