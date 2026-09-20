@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, effect, input, output, signal } from '@angular/core';
-import { FormControl, ReactiveFormsModule } from '@angular/forms';
+import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { MoneyIntent, MoneyOperation, WalletState } from '../api/wallet.models';
 import { describeError } from '../api/wallet-api.service';
 import { MAX_SAFE_VALUE, parseRubles } from '../shared/numbers';
@@ -12,7 +12,7 @@ import { MAX_SAFE_VALUE, parseRubles } from '../shared/numbers';
     template: `
         <section class="card" aria-labelledby="operations-heading" [attr.aria-busy]="busy()">
             <div class="section-heading"><span class="step">03</span><h2 id="operations-heading">Операции</h2></div>
-            <form (ngSubmit)="submit()">
+            <form [formGroup]="form" (ngSubmit)="submit()">
                 <fieldset [disabled]="disabled()">
                     <legend class="sr-only">Выберите операцию и сумму</legend>
                     <div class="segmented" aria-label="Операция">
@@ -73,6 +73,7 @@ export class WalletOperationsComponent {
     readonly refresh = output<void>();
     readonly operation = signal<MoneyOperation>('deposits');
     readonly amount = new FormControl('', { nonNullable: true });
+    readonly form = new FormGroup({ amount: this.amount });
     readonly confirmClose = signal(false);
     readonly validationError = signal('');
 

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
-import { FormControl, ReactiveFormsModule } from '@angular/forms';
+import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { describeError, WalletApiService } from '../api/wallet-api.service';
 import { WalletState } from '../api/wallet.models';
 import { formatMoney, parseVersion } from '../shared/numbers';
@@ -14,7 +14,7 @@ import { formatMoney, parseVersion } from '../shared/numbers';
         <section class="card" aria-labelledby="past-heading" [attr.aria-busy]="loading()">
             <div class="section-heading"><span class="step">05</span><h2 id="past-heading">Вернуться к версии</h2></div>
             <p class="hint">Посмотрите, каким был кошелёк после выбранного события. Текущее состояние не изменится.</p>
-            <form (ngSubmit)="show()">
+            <form [formGroup]="form" (ngSubmit)="show()">
                 <label for="at-version">Номер версии</label>
                 <div class="inline-form">
                     <input id="at-version" [formControl]="version" inputmode="numeric" placeholder="Например, 2"
@@ -41,6 +41,7 @@ export class HistoricalStateComponent {
     private requestGeneration = 0;
     readonly walletId = input.required<string | null>();
     readonly version = new FormControl('', { nonNullable: true });
+    readonly form = new FormGroup({ version: this.version });
     readonly state = signal<WalletState | null>(null);
     readonly loading = signal(false);
     readonly error = signal('');

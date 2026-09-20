@@ -48,7 +48,19 @@ main { max-width: 1376px; padding: 42px 28px 24px; margin: 0 auto; }
 .subtitle { color: var(--muted); font-size: .91rem; margin: 0; }
 .outline-label { white-space: nowrap; font-size: .7rem; padding: 7px 12px; border: 1px solid #d4ddd0; border-radius: 20px; color: var(--muted); }
 .workspace-grid { display: grid; grid-template-columns: 292px minmax(0, 1fr); gap: 24px; align-items: start; }
-.sidebar, .main-column { display: grid; gap: 22px; min-width: 0; }
+.sidebar, .main-column { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; min-width: 0; }
+/* Хосты Angular тоже участвуют в Grid: длинный UUID не должен задавать минимальную ширину карточки. */
+app-root,
+app-wallet-selector,
+app-wallet-state,
+app-wallet-operations,
+app-historical-state,
+app-event-history,
+app-last-operation {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+}
 .card { padding: 24px; border: 1px solid var(--border); border-radius: 15px; background: #fff; min-width: 0; }
 .section-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
 .step { font: 11px "SFMono-Regular", Consolas, monospace; color: #758378; background: #f2f4ee; border-radius: 6px; padding: 5px 6px; }
@@ -78,12 +90,13 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .recent-heading { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 22px; margin-top: 24px; }
 .recent-heading h3 { margin: 0; }
 .count { padding: 3px 8px; border-radius: 6px; background: #f1f4ed; color: #65765d; font-size: .68rem; white-space: nowrap; }
-.recent-list { display: grid; gap: 7px; margin-top: 15px; }
+.recent-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; margin-top: 15px; }
+.recent-item { min-width: 0; }
 .recent-item { display: flex; align-items: center; gap: 9px; border-radius: 8px; width: 100%; padding: 10px; background: #fff; border: 1px solid var(--border); text-align: left; font-size: .68rem; color: #526855; }
 .recent-item.selected { background: #eef5eb; border-color: #bdcfb7; }
 .recent-item:hover { background: #f4f7f0; }
 .wallet-mark { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 5px; background: #e8eee2; flex-shrink: 0; font-size: .72rem; }
-.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.truncate { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .learning-note { display: flex; gap: 12px; padding: 3px 12px; color: #6a7963; }
 .learning-note h3 { color: #546748; font-size: .8rem; margin-bottom: 6px; }
 .learning-note p { font-size: .75rem; line-height: 1.7; margin: 0; }
@@ -104,7 +117,7 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .state-placeholder p { margin-bottom: 0; }
 .empty-symbol { font-size: 28px; }
 .loading-dot { display: inline-block; width: 8px; height: 8px; background: #659875; border-radius: 50%; margin-right: 7px; }
-.actions-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+.actions-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; align-items: start; }
 .segmented { display: flex; gap: 4px; background: #f1f3ed; padding: 4px; border-radius: 9px; margin-bottom: 18px; }
 .segmented button { flex: 1; min-height: 35px; padding: 7px 8px; border-radius: 6px; background: transparent; color: #6a7963; font-size: .76rem; }
 .segmented button.active { background: white; color: var(--accent); box-shadow: 0 1px 3px #20342f12; font-weight: 650; }
@@ -144,7 +157,7 @@ pre { margin: 10px 0 0; padding: 16px; background: #f4f6f0; border: 1px solid #e
 .operation-summary { font-size: .9rem; font-weight: 600; color: #405837; }
 .summary-state { margin-left: 12px; font-size: .66rem; color: #89967d; font-weight: 400; overflow-wrap: anywhere; }
 .last-operation:not([open]) { padding-block: 18px; }
-.payload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.payload-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .payload-grid > div { min-width: 0; }
 .payload-grid h3 { font-size: .71rem; color: #708162; margin: 0; }
 .repeat-row { margin-top: 20px; display: flex; align-items: center; gap: 18px; }

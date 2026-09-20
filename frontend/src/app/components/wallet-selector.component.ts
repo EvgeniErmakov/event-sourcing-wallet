@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, effect, input, output, signal } from '@angular/core';
-import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RecentWallet } from '../api/wallet.models';
 import { UUID_PATTERN } from '../shared/numbers';
 
@@ -16,7 +16,7 @@ import { UUID_PATTERN } from '../shared/numbers';
             </button>
             <p class="hint">Новый UUID и валюта RUB. Начальный баланс — 0 ₽.</p>
             <div class="divider"><span>или откройте существующий</span></div>
-            <form (ngSubmit)="openWallet()">
+            <form [formGroup]="form" (ngSubmit)="openWallet()">
                 <label for="wallet-id">UUID кошелька</label>
                 <input id="wallet-id" class="mono" [formControl]="walletId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                     autocomplete="off" spellcheck="false" [attr.aria-invalid]="invalid()" aria-describedby="uuid-error">
@@ -45,6 +45,7 @@ export class WalletSelectorComponent {
     readonly open = output<string>();
     readonly invalid = signal(false);
     readonly walletId = new FormControl('', { nonNullable: true, validators: [Validators.required, Validators.pattern(UUID_PATTERN)] });
+    readonly form = new FormGroup({ walletId: this.walletId });
 
     constructor() {
         effect(() => {
