@@ -112,7 +112,7 @@ docker compose stop postgres
 7. [WalletController](src/main/java/com/example/wallet/controller/WalletController.java),
    [MoneyRequestDto](src/main/java/com/example/wallet/dto/request/MoneyRequestDto.java),
    [ApiExceptionHandler](src/main/java/com/example/wallet/exception/api/ApiExceptionHandler.java) — REST,
-   DTO/валидация и ProblemDetail. [UuidWebConfiguration](src/main/java/com/example/wallet/config/UuidWebConfiguration.java)
+   DTO/валидация и ProblemDetail. [UuidBindingAdvice](src/main/java/com/example/wallet/exception/api/UuidBindingAdvice.java)
    отвергает сокращённые UUID; [WalletConfiguration](src/main/java/com/example/wallet/config/WalletConfiguration.java)
    задаёт строгий JSON и внедряемый Clock.
 8. [Миграции](src/main/resources/db/changelog/001-wallet.sql) — таблицы, ограничения и комментарии PostgreSQL.

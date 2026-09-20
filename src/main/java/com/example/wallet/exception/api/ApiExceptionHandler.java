@@ -76,6 +76,9 @@ public class ApiExceptionHandler {
 
     private ResponseEntity<ProblemDetail> problem(HttpStatusCode status, String code, String detail,
             HttpServletRequest request) {
+        if (status.is4xxClientError()) {
+            log.info("Запрос отклонён: status={}, code={}", status.value(), code);
+        }
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
         problem.setType(URI.create("urn:wallet:error:" + code));
         problem.setInstance(URI.create(request.getRequestURI()));

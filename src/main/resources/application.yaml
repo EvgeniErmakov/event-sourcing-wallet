@@ -11,3 +11,8 @@ spring:
   sql:
     init:
       mode: never
+
+# Обычные консольные логи; для подробной диагностики задайте WALLET_LOG_LEVEL=DEBUG.
+logging:
+  level:
+    com.example.wallet: ${WALLET_LOG_LEVEL:INFO}

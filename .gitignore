@@ -43,3 +43,6 @@ build/
 !.env.example
 secrets/
 *.log
+
+# Включая ротированные журналы приложения.
+/logs/

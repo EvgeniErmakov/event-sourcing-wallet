@@ -63,6 +63,8 @@ public class WalletServiceImpl implements WalletService {
      */
     @Override
     public CommandReceipt execute(UUID walletId, UUID commandId, WalletCommand command) {
+        log.debug("Обработка команды: commandId={}, walletId={}, commandType={}, expectedVersion={}",
+                commandId, walletId, command.getClass().getSimpleName(), command.expectedVersion());
         String fingerprint = CommandFingerprint.of(walletId, command);
         Optional<CommandReceipt> previous = findReceipt(commandId);
         if (previous.isPresent()) {
@@ -72,12 +74,14 @@ public class WalletServiceImpl implements WalletService {
             CommandReceipt completed = Objects.requireNonNull(write.execute(ignored ->
                     executeInTransaction(walletId, commandId, command, fingerprint)));
             // execute уже выполнил commit: до этой точки нельзя сообщать об успехе команды.
-            log.info("Команда завершена: commandId={}, walletId={}, version={}",
-                    commandId, walletId, completed.responseBody().version());
+            log.info("Команда завершена: commandId={}, walletId={}, commandType={}, version={}",
+                    commandId, walletId, command.getClass().getSimpleName(), completed.responseBody().version());
             return completed;
         } catch (WalletException failure) {
             // Здесь транзакция записи уже завершилась rollback, её объект Wallet отброшен.
             // Не ловим произвольные SQL-ошибки как 409: они остаются серверными ошибками.
+            log.debug("Транзакция отменена: commandId={}, walletId={}, code={}; поиск receipt после rollback",
+                    commandId, walletId, failure.code());
             return findReceipt(commandId)
                     .map(receipt -> matching(receipt, fingerprint))
                     .orElseThrow(() -> failure);
@@ -87,6 +91,7 @@ public class WalletServiceImpl implements WalletService {
     /** GET восстанавливает полный поток или его префикс; receipt никогда не читается. */
     @Override
     public WalletState get(UUID walletId, Long atVersion) {
+        log.debug("Чтение состояния: walletId={}, atVersion={}", walletId, atVersion);
         if (atVersion != null && atVersion < 1) {
             throw new WalletException(INVALID_REQUEST, "Некорректная версия");
         }
@@ -107,6 +112,7 @@ public class WalletServiceImpl implements WalletService {
     /** Курсорная история читает limit+1 строк; ограничение страницы не ограничивает replay. */
     @Override
     public EventPage history(UUID walletId, long afterVersion, int limit) {
+        log.debug("Чтение истории: walletId={}, afterVersion={}, limit={}", walletId, afterVersion, limit);
         if (afterVersion < 0 || limit < 1 || limit > 500) {
             throw new WalletException(INVALID_REQUEST, "Некорректная пагинация");
         }
@@ -117,7 +123,10 @@ public class WalletServiceImpl implements WalletService {
             List<StoredEvent> found = events.readPage(walletId, afterVersion, limit + 1);
             boolean hasMore = found.size() > limit;
             List<StoredEvent> items = hasMore ? found.subList(0, limit) : found;
-            return new EventPage(items, items.isEmpty() ? afterVersion : items.getLast().streamVersion(), hasMore);
+            long nextAfterVersion = items.isEmpty() ? afterVersion : items.getLast().streamVersion();
+            log.debug("Страница истории прочитана: walletId={}, count={}, nextAfterVersion={}, hasMore={}",
+                    walletId, items.size(), nextAfterVersion, hasMore);
+            return new EventPage(items, nextAfterVersion, hasMore);
         });
     }
 
@@ -134,11 +143,15 @@ public class WalletServiceImpl implements WalletService {
         long expectedVersion = wallet.version();
         wallet.apply(event);
         var occurredAt = clock.instant();
-        events.append(walletId, expectedVersion, event, UUID.randomUUID(), commandId, occurredAt);
+        UUID eventId = UUID.randomUUID();
+        log.debug("Новый факт подготовлен: commandId={}, walletId={}, eventId={}, eventType={}, resultingVersion={}",
+                commandId, walletId, eventId, event.getClass().getSimpleName(), wallet.version());
+        events.append(walletId, expectedVersion, event, eventId, commandId, occurredAt);
         CommandReceipt receipt = new CommandReceipt(commandId, fingerprint,
                 command instanceof WalletCommand.CreateWallet ? 201 : 200,
                 WalletState.from(wallet), clock.instant());
         receipts.insert(receipt);
+        log.debug("Событие и receipt вставлены; ожидается commit: commandId={}, walletId={}", commandId, walletId);
         return receipt;
     }
 
@@ -151,12 +164,17 @@ public class WalletServiceImpl implements WalletService {
     }
 
     private Wallet restore(UUID walletId, List<StoredEvent> history) {
-        return Wallet.rehydrate(walletId, history.stream().map(StoredEvent::payload).toList());
+        log.debug("Replay начат: walletId={}, eventCount={}", walletId, history.size());
+        Wallet wallet = Wallet.rehydrate(walletId, history.stream().map(StoredEvent::payload).toList());
+        log.debug("Replay завершён: walletId={}, version={}", walletId, wallet.version());
+        return wallet;
     }
 
     /** Отсутствие receipt — обычный результат; каждый поиск получает отдельную транзакцию чтения. */
     private Optional<CommandReceipt> findReceipt(UUID commandId) {
-        return inRead(() -> receipts.find(commandId));
+        Optional<CommandReceipt> receipt = inRead(() -> receipts.find(commandId));
+        log.debug("Поиск receipt: commandId={}, found={}", commandId, receipt.isPresent());
+        return receipt;
     }
 
     private <T> T inRead(Supplier<T> action) {

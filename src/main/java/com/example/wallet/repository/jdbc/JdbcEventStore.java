@@ -18,6 +18,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -34,6 +36,8 @@ public class JdbcEventStore implements EventStore {
             e.event_id, e.stream_id, e.stream_version, e.event_type, e.schema_version,
             e.payload::text AS payload, e.occurred_at, e.command_id
             """;
+    private static final Logger log = LoggerFactory.getLogger(JdbcEventStore.class);
+
     private final NamedParameterJdbcTemplate jdbc;
     private final EventSerializer serializer;
 
@@ -70,6 +74,7 @@ public class JdbcEventStore implements EventStore {
             if (!result.isEmpty() && metadataVersion != result.getLast().streamVersion()) {
                 throw new CorruptHistoryException("Метаданные версии не совпадают с историей");
             }
+            log.debug("Поток загружен: walletId={}, eventCount={}, streamVersion={}", walletId, result.size(), metadataVersion);
             return List.copyOf(result);
         });
     }
@@ -104,6 +109,7 @@ public class JdbcEventStore implements EventStore {
                 UPDATE event_streams SET current_version = current_version + 1
                 WHERE stream_id = :id AND current_version = :expected
                 """, params);
+        log.debug("CAS версии: walletId={}, expectedVersion={}, updatedRows={}", walletId, expectedVersion, updated);
         if (updated == 0) {
             throw new WalletException(VERSION_CONFLICT, "Поток изменён конкурентом");
         }
