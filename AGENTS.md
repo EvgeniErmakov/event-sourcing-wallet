@@ -6,7 +6,7 @@
 
 Следовать текущим указаниям пользователя. Этот AGENTS.md и адаптированные документы docs определяют текущие правила проекта. Старые промпты и примеры другого проекта не являются основанием возвращать JPA, менять расположение слоёв или добавлять тесты. При переносе новых правил обновить противоречащие описания в README и существующей спецификации, сохранив бизнес-контракты.
 
-Перед работой прочитать `docs/PROJECT.md`, `docs/architecture.md`, `docs/database.md` и документы, относящиеся к изменяемому коду. Полный набор правил: architecture.md, code-style.md, checkstyle-rules.md, database.md, api-guidelines.md, code-quality.md, logging.md, security.md. Файл `docs/REFACTORING_PROMPT.md` описывает отдельную задачу; его присутствие не означает, что рефакторинг надо запускать при любом запросе.
+Перед работой прочитать `docs/PROJECT.md`, `docs/architecture.md`, `docs/database.md` и документы, относящиеся к изменяемому коду. Полный набор правил: architecture.md, code-style.md, checkstyle-rules.md, database.md, api-guidelines.md, code-quality.md, logging.md, security.md.
 
 ## Стек
 
