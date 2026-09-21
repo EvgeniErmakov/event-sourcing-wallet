@@ -12,7 +12,7 @@
         <span class="outline-label">RUB · Event store</span>
     </div>
     @if (storageMessage()) { <p class="notice warning" role="status">{{ storageMessage() }}</p> }
-    @if (uncertain()) {
+    @if (selectedUncertain()) {
         <div class="notice warning" role="alert">Результат последней команды неизвестен. Новые команды временно отключены.
             <a href="#last-operation">Повторите сохранённый запрос</a>, чтобы не выполнить операцию дважды.</div>
     }
@@ -28,7 +28,7 @@
         <div class="main-column">
             <section class="card handler-card" aria-labelledby="handler-heading">
                 <div class="card-heading"><h2 id="handler-heading">Фоновый обработчик</h2>
-                    <button class="secondary" type="button" [disabled]="!handler()" (click)="toggleHandler()">
+                    <button class="secondary" type="button" [disabled]="!handler() || handlerActionInFlight()" (click)="toggleHandler()">
                         {{ handler()?.paused || handler()?.pauseRequested ? 'Возобновить' : 'Приостановить' }}
                     </button>
                 </div>

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, effect, inject, input, OnDestroy, output, signal } from '@angular/core';
 import { describeError, WalletApiService } from '../api/wallet-api.service';
 import { WalletComparison } from '../api/wallet.models';
 import { formatMoney } from '../shared/numbers';
@@ -42,17 +42,19 @@ import { formatMoney } from '../shared/numbers';
                 <p class="notice" [class.success]="result.matches" [class.warning]="result.status === 'LAGGING'" [class.error]="!result.matches && result.status !== 'LAGGING'" role="status">
                     {{ result.matches ? 'Модели совпадают.' : result.status === 'LAGGING' ? 'Проекция догоняет.' : 'Ошибка целостности моделей.' }}
                 </p>
-                <p class="hint">Результат на момент нажатия. После внешних изменений обновите сравнение вручную.</p>
+                <p class="hint">Результат последнего согласованного снимка. Обновление выполняется автоматически и доступно по кнопке.</p>
             } @else if (!loading() && !error()) {
-                <p class="empty-small">{{ walletId() ? 'Нажмите «Обновить сравнение» для чтения обеих моделей.' : 'Выберите кошелёк.' }}</p>
+                <p class="empty-small">{{ walletId() ? 'Ожидаем первый снимок обеих моделей.' : 'Выберите кошелёк.' }}</p>
             }
         </section>
     `,
 })
-export class ModelComparisonComponent {
+export class ModelComparisonComponent implements OnDestroy {
     private readonly api = inject(WalletApiService);
-    private generation = 0;
-    private requestInFlight = false;
+    private walletGeneration = 0;
+    private activeRequest: ComparisonRequest | null = null;
+    private lastWalletId: string | null | undefined;
+    private destroyed = false;
     readonly walletId = input.required<string | null>();
     readonly context = input.required<number>();
     readonly busy = input(false);
@@ -64,38 +66,76 @@ export class ModelComparisonComponent {
 
     constructor() {
         effect(() => {
-            this.walletId();
+            const id = this.walletId();
             this.context();
-            ++this.generation;
-            this.comparison.set(null);
-            this.error.set('');
-            if (!this.requestInFlight) this.loading.set(false);
-            void this.refresh();
+            if (id !== this.lastWalletId) {
+                this.lastWalletId = id;
+                ++this.walletGeneration;
+                this.comparison.set(null);
+                this.error.set('');
+                this.loading.set(false);
+            }
+            this.requestRefresh(id);
         });
     }
 
-    /** Счётчик выбора и запроса защищает в том числе переключение A → B → A и обновление после команды. */
+    /**
+     * Контекст кошелька меняется только при выборе другого UUID. Повторный сигнал того же
+     * контекста ставит максимум одну отложенную загрузку и не делает текущий ответ устаревшим.
+     */
     async refresh(): Promise<void> {
         const id = this.walletId();
-        if (!id || this.requestInFlight || this.busy()) return;
-        const generation = ++this.generation;
-        const context = this.context();
-        const current = (): boolean => generation === this.generation && context === this.context() && id === this.walletId();
+        this.requestRefresh(id);
+    }
+
+    private requestRefresh(id: string | null): void {
+        if (!id) return;
+        const current = this.activeRequest;
+        if (current && current.walletId === id && current.walletGeneration === this.walletGeneration) {
+            current.queued = true;
+            return;
+        }
+        const request: ComparisonRequest = {
+            walletId: id,
+            walletGeneration: this.walletGeneration,
+            queued: false,
+        };
+        this.activeRequest = request;
+        void this.run(request);
+    }
+
+    private async run(request: ComparisonRequest): Promise<void> {
         this.loading.set(true);
-        this.requestInFlight = true;
         this.error.set('');
-        this.comparison.set(null);
+        const isCurrent = (): boolean => !this.destroyed && this.activeRequest === request
+            && request.walletGeneration === this.walletGeneration
+            && request.walletId === this.walletId();
         try {
-            const comparison = await this.api.getComparison(id);
-            if (current()) {
+            const comparison = await this.api.getComparison(request.walletId);
+            if (isCurrent()) {
                 this.comparison.set(comparison);
                 this.stateChange.emit(comparison);
             }
         } catch (error: unknown) {
-            if (current()) this.error.set(describeError(error));
+            if (isCurrent()) this.error.set(describeError(error));
         } finally {
-            this.requestInFlight = false;
-            if (current()) this.loading.set(false);
+            if (isCurrent()) {
+                this.loading.set(false);
+                if (request.queued) {
+                    request.queued = false;
+                    void this.run(request);
+                }
+            }
         }
     }
+
+    ngOnDestroy(): void {
+        this.destroyed = true;
+    }
+}
+
+interface ComparisonRequest {
+    readonly walletId: string;
+    readonly walletGeneration: number;
+    queued: boolean;
 }
