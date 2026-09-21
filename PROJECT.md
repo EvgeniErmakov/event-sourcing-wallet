@@ -1,12 +1,12 @@
 # Исторические материалы шага 1
 
 Этот файл сохранён как указатель для перехода с первого учебного этапа. Его описание
-Event Sourcing без CQRS больше не является спецификацией текущей ветки `02-cqrs-sync`.
+Event Sourcing без CQRS больше не является спецификацией текущей ветки `03-cqrs-async`.
 
 Актуальные правила и фактические контракты находятся здесь:
 
-- [docs/PROJECT.md](docs/PROJECT.md) — действующая спецификация Event Sourcing + CQRS;
-- [docs/architecture.md](docs/architecture.md) — слои и границы команд, запросов и проектора;
+- [docs/PROJECT.md](docs/PROJECT.md) — действующая спецификация Event Sourcing + асинхронный CQRS;
+- [docs/architecture.md](docs/architecture.md) — слои и границы команд, запросов и обработчика;
 - [docs/database.md](docs/database.md) — Liquibase, таблицы и транзакционная запись;
 - [docs/LEARNING.md](docs/LEARNING.md) — учебный маршрут и запуск на чистой БД;
 - [README.md](README.md) — запуск приложения и frontend.

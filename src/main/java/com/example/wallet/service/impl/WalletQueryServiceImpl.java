@@ -1,6 +1,7 @@
 package com.example.wallet.service.impl;
 
 import static com.example.wallet.exception.domain.WalletException.Code.INVALID_REQUEST;
+import static com.example.wallet.exception.domain.WalletException.Code.PROJECTION_NOT_READY;
 import static com.example.wallet.exception.domain.WalletException.Code.VERSION_NOT_FOUND;
 import static com.example.wallet.exception.domain.WalletException.Code.WALLET_NOT_FOUND;
 
@@ -44,7 +45,8 @@ public class WalletQueryServiceImpl implements WalletQueryService {
     }
 
     /**
-     * При обычном GET нет replay и скрытого backfill. Отсутствие проекции существующего потока — 500.
+     * При обычном GET нет replay и скрытого backfill. Отсутствие первой проекции — ожидаемый
+     * временный результат асинхронной доставки и возвращается как 409 PROJECTION_NOT_READY.
      * Историческое чтение не зависит от готовности проекции и сохраняет прежние границы atVersion.
      */
     @Override
@@ -90,13 +92,24 @@ public class WalletQueryServiceImpl implements WalletQueryService {
     public WalletComparison compare(UUID walletId) {
         return Objects.requireNonNull(read.execute(ignored -> {
             WalletState eventState = restore(walletId, requiredHistory(walletId));
-            return new WalletComparison(eventState, models.find(walletId));
+            var readModel = models.find(walletId);
+            long projectionVersion = readModel.map(WalletReadModel::lastEventVersion).orElse(0L);
+            if (projectionVersion > eventState.version()) {
+                throw new ProjectionIntegrityException("Проекция опережает поток: walletId=" + walletId);
+            }
+            if (projectionVersion == eventState.version()
+                    && readModel.isPresent() && !eventState.equals(readModel.get().toState())) {
+                throw new ProjectionIntegrityException("Состояния одной версии различаются: walletId=" + walletId);
+            }
+            long pending = eventState.version() - projectionVersion;
+            return new WalletComparison(eventState, readModel, projectionVersion, pending,
+                    pending == 0 ? "MATCHED" : "LAGGING");
         }));
     }
 
     private WalletState missingModel(UUID walletId) {
         if (events.streamExists(walletId)) {
-            throw new ProjectionIntegrityException("Нарушение целостности: проекция существующего потока отсутствует: " + walletId);
+            throw new WalletException(PROJECTION_NOT_READY, "Проекция кошелька ещё не готова");
         }
         throw new WalletException(WALLET_NOT_FOUND, "Кошелёк не найден");
     }

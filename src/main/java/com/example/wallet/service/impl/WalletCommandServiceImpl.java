@@ -8,9 +8,9 @@ import com.example.wallet.domain.event.WalletEvent;
 import com.example.wallet.exception.domain.WalletException;
 import com.example.wallet.repository.CommandReceiptRepository;
 import com.example.wallet.repository.EventStore;
+import com.example.wallet.repository.ProjectionPositionRepository;
 import com.example.wallet.service.CommandFingerprint;
 import com.example.wallet.service.WalletCommandService;
-import com.example.wallet.service.WalletReadModelProjector;
 import com.example.wallet.service.model.CommandReceipt;
 import com.example.wallet.service.model.StoredEvent;
 import com.example.wallet.service.model.WalletState;
@@ -29,7 +29,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Командная модель: replay, бизнес-решение и явная граница атомарности. Не содержит SQL или сериализации.
- * Событие, версия, синхронная проекция и receipt фиксируются до возврата результата; ошибки не кэшируются.
+ * Событие, версия и receipt фиксируются до возврата результата; асинхронная проекция в эту транзакцию не входит.
  * REQUIRES_NEW исключает возврат успеха до commit даже при вызове из внешней транзакции.
  */
 @Service
@@ -39,22 +39,22 @@ public class WalletCommandServiceImpl implements WalletCommandService {
     private final EventStore events;
     private final CommandReceiptRepository receipts;
     private final Clock clock;
-    private final WalletReadModelProjector projector;
+    private final ProjectionPositionRepository positions;
     private final TransactionTemplate write;
     private final TransactionTemplate read;
 
     public WalletCommandServiceImpl(EventStore events, CommandReceiptRepository receipts,
-            Clock clock, PlatformTransactionManager manager, WalletReadModelProjector projector) {
+            Clock clock, PlatformTransactionManager manager, ProjectionPositionRepository positions) {
         this.events = events;
         this.receipts = receipts;
         this.clock = clock;
-        this.projector = projector;
+        this.positions = positions;
         this.write = transaction(manager, false);
         this.read = transaction(manager, true);
     }
 
     /**
-     * Сначала ищет прежний ответ, затем выполняет load → replay → decide → apply → append → projector → receipt.
+     * Сначала ищет прежний ответ, затем выполняет load → replay → decide → apply → append → receipt.
      * execute возвращает управление только после commit. При отказе версии/состояния и
      * адресной коллизии ключа execute сначала делает rollback; лишь затем читается receipt
      * в отдельной транзакции. Дубль, уже завершённый конкурентом, получает прежний ответ.
@@ -95,7 +95,11 @@ public class WalletCommandServiceImpl implements WalletCommandService {
             WalletCommand command, String fingerprint) {
         Wallet wallet = restore(walletId, events.load(walletId));
         List<WalletEvent> decided = wallet.decide(command);
-        // Первая версия домена возвращает ровно один факт на успешную команду.
+        // Текущий домен обещает один факт на команду. Явная проверка не позволяет
+        // silently discard дополнительные события при изменении доменной модели.
+        if (decided.size() != 1) {
+            throw new IllegalStateException("Команда должна порождать ровно одно событие");
+        }
         WalletEvent event = decided.getFirst();
         long expectedVersion = wallet.version();
         wallet.apply(event);
@@ -104,13 +108,17 @@ public class WalletCommandServiceImpl implements WalletCommandService {
         log.debug("Новый факт подготовлен: commandId={}, walletId={}, eventId={}, eventType={}, resultingVersion={}",
                 commandId, walletId, eventId, event.getClass().getSimpleName(), wallet.version());
         events.append(walletId, expectedVersion, event, eventId, commandId, occurredAt);
-        // Проектор использует ту же транзакцию: его ошибка откатывает append и receipt.
-        projector.apply(walletId, expectedVersion + 1, event);
+        if (expectedVersion == 0) {
+            // Позиция создаётся в той же транзакции, что поток и первое событие.
+            // При rollback не остаётся ни потока, ни курсора, ни факта.
+            positions.create(walletId);
+        }
         CommandReceipt receipt = new CommandReceipt(commandId, fingerprint,
                 command instanceof WalletCommand.CreateWallet ? 201 : 200,
                 WalletState.from(wallet), clock.instant());
         receipts.insert(receipt);
-        log.debug("Событие, проекция и receipt записаны; ожидается commit: commandId={}, walletId={}", commandId, walletId);
+        log.debug("Событие и receipt записаны; проекция будет применена обработчиком: commandId={}, walletId={}",
+                commandId, walletId);
         return receipt;
     }
 

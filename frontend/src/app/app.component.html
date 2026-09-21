@@ -22,10 +22,24 @@
                 (create)="create()" (open)="open($event)" />
             <div class="learning-note"><span class="note-symbol" aria-hidden="true">≡</span>
                 <div><h3>События — источник истины</h3><p>Команды восстанавливают кошелёк из событий.
-                    Карточка читает синхронно обновляемую проекцию.</p></div>
+                    Read model догоняет события отдельным обработчиком.</p></div>
             </div>
         </aside>
         <div class="main-column">
+            <section class="card handler-card" aria-labelledby="handler-heading">
+                <div class="card-heading"><h2 id="handler-heading">Фоновый обработчик</h2>
+                    <button class="secondary" type="button" [disabled]="!handler()" (click)="toggleHandler()">
+                        {{ handler()?.paused || handler()?.pauseRequested ? 'Возобновить' : 'Приостановить' }}
+                    </button>
+                </div>
+                @if (handler(); as state) {
+                    <p class="handler-status"><span class="badge" [class.closed]="state.paused">{{ state.status }}</span>
+                        {{ state.processing ? 'Текущая порция ещё выполняется.' : state.paused ? 'Новые порции не запускаются.' : 'Polling включён.' }}</p>
+                    @if (state.lastError) { <p class="notice error" role="alert">Ошибка обработки: {{ state.lastError }}</p> }
+                }
+                @if (handlerError()) { <p class="error-text" role="alert">{{ handlerError() }}</p> }
+                <p class="hint">Пауза действует только на этот экземпляр backend. Уже начатая транзакция может завершиться.</p>
+            </section>
             <app-wallet-state [selected]="selected()" [wallet]="wallet()" [loading]="stateLoading()"
                 [error]="stateError()" [busy]="busy()" (refresh)="refresh()" />
             <div class="actions-grid">
@@ -34,7 +48,8 @@
                     [needsRefresh]="needsRefresh()" (money)="performMoney($event)" (close)="close()" (refresh)="refresh()" />
                 <app-historical-state [walletId]="selected()" />
             </div>
-            <app-model-comparison [walletId]="selected()" [context]="comparisonContext()" [busy]="busy()" />
+            <app-model-comparison [walletId]="selected()" [context]="comparisonContext()" [busy]="busy()"
+                (stateChange)="onComparison($event)" />
             <app-event-history [selected]="selected()" [events]="events()" [loading]="historyLoading()"
                 [loaded]="historyLoaded()" [hasMore]="historyHasMore()" [error]="historyError()" [busy]="busy()"
                 (more)="loadHistory()" (retry)="loadHistory()" />

@@ -45,7 +45,7 @@ public class ApiExceptionHandler {
         return problem(HttpStatus.INTERNAL_SERVER_ERROR, "CORRUPT_HISTORY", "Ошибка целостности сохранённых данных", request);
     }
 
-    /** Отсутствующая или повреждённая производная модель — ошибка подготовки/целостности, а не 404 кошелька. */
+    /** Повреждённая производная модель — ошибка целостности; временное отсутствие первой строки обрабатывает WalletException. */
     @ExceptionHandler(ProjectionIntegrityException.class)
     public ResponseEntity<ProblemDetail> projection(ProjectionIntegrityException error, HttpServletRequest request) {
         log.error("Нарушение целостности проекции", error);

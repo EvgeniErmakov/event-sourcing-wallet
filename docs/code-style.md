@@ -73,4 +73,4 @@ WalletCommandService/WalletCommandServiceImpl и WalletQueryService/WalletQueryS
 WalletReadModelProjector — небольшой компонент применения фактов, без искусственной пары Impl.
 WalletReadModel — отдельный record; Wallet остаётся чистым доменным объектом.
 WalletComparison хранит Optional отсутствующей проекции; только HTTP DTO отображает её как null.
-JavaDoc проектора объясняет проверку версии, общую транзакцию и отличие факта от команды.
+JavaDoc проектора объясняет проверку версии, отдельную транзакцию обработчика и отличие факта от команды.

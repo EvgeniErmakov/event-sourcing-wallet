@@ -11,8 +11,8 @@ import { displayJson } from '../shared/numbers';
             <summary class="operation-summary"><span>Последняя операция</span>
                 <span class="summary-state">{{ operation()?.pending ? 'Отправляется' : operation() ? operation()?.request?.kind : 'Пока нет команд' }}</span>
             </summary>
-            <p class="hint">Новая команда проверяется на восстановленном состоянии. При успехе сервер сохраняет новое событие
-                вместе с проекцией и результатом команды в одной транзакции.
+            <p class="hint">Новая команда проверяется на восстановленном состоянии. При успехе сервер сохраняет событие
+                и receipt; фоновый обработчик обновляет проекцию отдельной транзакцией.
                 Здесь показаны только отправленный запрос и полученный ответ.</p>
             @if (operation(); as last) {
                 <dl class="technical-list request-meta">

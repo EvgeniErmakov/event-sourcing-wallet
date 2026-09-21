@@ -1,8 +1,0 @@
-# Master только подключает последовательные миграции; применённые changesets не изменяются.
-databaseChangeLog:
-  - include:
-      file: 001-wallet.sql
-      relativeToChangelogFile: true
-  - include:
-      file: liquibase/changelog/2026.09/2026.09-changelog.xml
-      relativeToChangelogFile: false

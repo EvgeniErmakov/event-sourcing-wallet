@@ -84,7 +84,7 @@ public class JdbcEventStore implements EventStore {
      * UPDATE-CAS блокирует строку и повторно проверяет условие после ожидания конкурента.
      * Нулевой результат не допускает запись события. Для создания PK разрешает гонку
      * вставок; ON CONFLICT направлен только на этот PK. Исключение заставляет сервис
-     * откатить CAS, INSERT события, проекцию и receipt. Здесь нет commit и чтения результата конкурента.
+     * откатить CAS, INSERT события, позицию и receipt. Здесь нет commit и чтения результата конкурента.
      */
     @Override
     public void append(UUID walletId, long expectedVersion, WalletEvent event, UUID eventId,
@@ -157,6 +157,19 @@ public class JdbcEventStore implements EventStore {
         return List.copyOf(page);
     }
 
+    /**
+     * Возвращает факты после сохранённой позиции. Порядок задаётся только stream_version;
+     * глобальный sequence-курсор намеренно не используется: commit конкурирующих транзакций
+     * может завершиться в порядке, отличном от выдачи sequence.
+     */
+    @Override
+    public List<StoredEvent> readAfter(UUID walletId, long afterVersion, int limit) {
+        return jdbc.query("SELECT " + EVENT_COLUMNS + """
+                 FROM wallet_events e WHERE e.stream_id = :id AND e.stream_version > :after
+                 ORDER BY e.stream_version ASC LIMIT :limit
+                """, Map.of("id", walletId, "after", afterVersion, "limit", limit), (rs, row) -> map(rs));
+    }
+
     /** {@inheritDoc} */
     @Override
     public boolean streamExists(UUID walletId) {
@@ -167,8 +180,14 @@ public class JdbcEventStore implements EventStore {
     private StoredEvent map(ResultSet rs) throws SQLException {
         String type = rs.getString("event_type");
         int schema = rs.getInt("schema_version");
-        return new StoredEvent(rs.getObject("event_id", UUID.class), rs.getObject("stream_id", UUID.class),
-                rs.getLong("stream_version"), type, schema, serializer.decode(type, schema, rs.getString("payload")),
-                rs.getObject("occurred_at", OffsetDateTime.class).toInstant(), rs.getObject("command_id", UUID.class));
+        long version = rs.getLong("stream_version");
+        UUID streamId = rs.getObject("stream_id", UUID.class);
+        try {
+            return new StoredEvent(rs.getObject("event_id", UUID.class), streamId, version, type, schema,
+                    serializer.decode(type, schema, rs.getString("payload")),
+                    rs.getObject("occurred_at", OffsetDateTime.class).toInstant(), rs.getObject("command_id", UUID.class));
+        } catch (CorruptHistoryException error) {
+            throw new CorruptHistoryException("Ошибка события streamId=" + streamId + ", streamVersion=" + version, error);
+        }
     }
 }

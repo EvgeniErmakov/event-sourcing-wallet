@@ -1,101 +1,51 @@
-# Архитектура Event Sourcing Wallet
+# Архитектура этапа 03
 
-## Область применения
+Одно приложение и одна PostgreSQL содержат write side и read side. Event Sourcing хранит
+факты в `wallet_events`; CQRS разделяет командный и query-сервисы; eventual consistency
+возникает потому, что read model обновляет отдельный polling-обработчик.
 
-Учебный сервис кошельков: Java 25, Spring Boot 4, Gradle, PostgreSQL, Spring JDBC, Liquibase. Один модуль и одно приложение. Архитектура и правила ниже заменяют правила другого проекта о JPA-сущностях и хранении текущего состояния.
+## Потоки
 
-События — источник истины о Wallet. Команды восстанавливают Wallet из фактов, текущий GET читает wallet_read_model. Синхронный проектор обновляет её в транзакции команды. Историческое чтение и явное сравнение выполняют replay. Асинхронных обработчиков, snapshots и брокера нет.
+Команда:
 
-## Директории и ответственности
+```text
+HTTP → WalletCommandServiceImpl
+     → load/replay Wallet → decide/apply
+     → CAS current_version + INSERT wallet_events + INSERT command_receipt
+     → commit → HTTP-ответ write side
+```
 
-Сохранить существующий базовый пакет проекта; для нового проекта — `com.example.wallet`. Относительно него использовать следующую структуру:
+Обработчик:
 
-| Пакет / директория | Содержимое |
+```text
+@Scheduled polling → список projection_positions
+  → отдельная транзакция на wallet_id
+  → SELECT position FOR UPDATE
+  → wallet_events после позиции, ASC, ограниченная порция
+  → WalletReadModelProjector.apply
+  → UPDATE wallet_read_model + UPDATE projection_positions → commit
+```
+
+Ошибка порции откатывает проекцию и позицию. Следующий цикл повторяет её, остальные кошельки
+обрабатываются независимо. После перезапуска обработчик продолжает с сохранённых позиций.
+
+| Пакет | Ответственность |
 |---|---|
-| `controller` | Все REST-контроллеры, например WalletController |
-| `dto/request` | Входные HTTP DTO |
-| `dto/response` | Выходные HTTP DTO |
-| `service` | Интерфейсы прикладных сервисов, например WalletCommandService |
-| `service/impl` | Реализации интерфейсов, например WalletCommandServiceImpl |
-| `service/model` | WalletState, WalletReadModel, WalletComparison, CommandReceipt, StoredEvent, EventPage |
-| `domain` | Wallet, состояние и бизнес-правила |
-| `domain/command` | Типизированные команды |
-| `domain/event` | Неизменяемые доменные события |
-| `repository` | EventStore, CommandReceiptRepository, WalletReadModelRepository |
-| `repository/jdbc` | JDBC-реализации, SQL и mapping строк |
-| `serialization` | Явный реестр типов событий и JSON-сериализация |
-| `exception/domain` | Бизнес-исключения на чистой Java |
-| `exception/application` | Ошибки сценариев, конфликт версий и идемпотентности |
-| `exception/infrastructure` | ProjectionIntegrityException: ошибка подготовки или целостности проекции |
-| `exception/api` | Глобальный RestControllerAdvice и преобразование ошибок в ProblemDetail |
-| `config` | Конфигурация Spring, Clock, транзакций и сериализации |
-| `mapper` | Только необходимые явные преобразования DTO/команд/результатов |
+| `domain` | Wallet, команды и события без Spring/JDBC |
+| `service` | интерфейсы сервисов, projector и техническое управление |
+| `service.impl` | command/query service и AsyncProjectionHandler |
+| `repository` / `repository.jdbc` | контракты и параметризованный SQL |
+| `controller` | Wallet API и endpoints управления обработчиком |
+| `exception` | доменные и инфраструктурные ошибки, ProblemDetail |
 
-Контроллеры обязательно находятся в собственной директории `controller`. Собственные исключения и глобальная обработка ошибок обязательно находятся в отдельной директории `exception` и её подпакетах. Не размещать их рядом с контроллерами, сервисами или как вложенные классы Wallet.
+`WalletReadModelProjector` применяет уже принятые факты и не вызывает `decide`. Его проверки
+контролируют версии, переполнение и ограничения таблицы, но не повторяют бизнес-решения Wallet.
 
-Создавать пакеты по мере необходимости; не заполнять пустые директории фиктивными классами.
+Обычный GET делает только SELECT read model. Если поток существует, но строки ещё нет, ответ
+`409 PROJECTION_NOT_READY`; replay и ожидание запрещены. Исторический GET, история и comparison
+читают Event Store. Comparison выполняет replay и SELECT read model в одном read-only
+`REPEATABLE READ` снимке. Проекция может быть `null`, её версия тогда 0, а pending равен
+версии потока.
 
-## Сервисы: интерфейс и реализация
-
-Каждый прикладной сервис имеет интерфейс в `service` и реализацию в `service.impl`. Например: `WalletCommandServiceImpl implements WalletCommandService`. Интерфейс объявляет прикладные операции, реализация помечается `@Service`, методы реализации — `@Override`. Контроллер зависит от интерфейса.
-
-Это правило относится к прикладным сервисам, а не ко всем классам. Wallet, события, DTO, сериализатор и конфигурация не требуют пар интерфейс/Impl только ради единообразия. EventStore и репозитории уже имеют собственные интерфейсы; реализации получают содержательные имена JdbcEventStore и JdbcCommandReceiptRepository.
-
-## Разделение логики
-
-- Controller проверяет HTTP-формат, преобразует DTO в команду, вызывает интерфейс сервиса, оформляет ответ. SQL и бизнес-правил в нём нет.
-- WalletCommandServiceImpl управляет идемпотентностью, replay и транзакцией события, версии, проекции и receipt.
-- WalletQueryServiceImpl реализует WalletQueryService: текущий GET из проекции, историческое чтение, история и сравнение.
-- WalletReadModelProjector переводит факты в INSERT/UPDATE с контролем предыдущей версии; бизнес-команды не выполняет.
-- Wallet проверяет возможность операции и формирует события. Именно здесь находятся правила «нельзя уйти в минус» и «нельзя списать с закрытого кошелька».
-- EventStore загружает историю и сохраняет события с контролем ожидаемой версии. Он не принимает решения о допустимости списания.
-- DTO описывает HTTP-контракт; событие описывает бизнес-факт. Не использовать DTO как сохранённый формат события.
-
-Не переносить все бизнес-правила в service.impl ради традиционной CRUD-схемы. Domain не является набором таблиц или JPA-сущностей. Он не зависит от Spring, JDBC, Jackson, DTO и HTTP; может зависеть от чистых Java-исключений в exception.domain.
-
-## Жизненный цикл команды
-
-1. Принять запрос, нормализовать команду и её Idempotency-Key.
-2. Проверить сохранённый результат той же команды.
-3. В транзакции загрузить события кошелька и восстановить Wallet.
-4. Проверить expectedVersion клиента и вызвать decide(command).
-5. Применить новые события к локальному объекту через apply(event).
-6. Атомарно записать события, изменить техническую версию потока, применить синхронную проекцию и вставить receipt.
-7. После commit вернуть успешный результат.
-
-`decide` возвращает новые события, `apply` применяет факт, `rehydrate` воспроизводит сохранённую историю. Replay не выполняет команды, не генерирует новые UUID/время, не обращается к внешним системам и не сохраняет события повторно. В случае rollback локальный изменённый Wallet отбрасывается.
-
-## Транзакционная граница
-
-Прикладная реализация сервиса определяет границу операции. Допустимы TransactionTemplate или корректно настроенный @Transactional; TransactionTemplate предпочтителен, если явно показывает rollback и последующее чтение результата конкурента.
-
-Наличие интерфейса сервиса не требует аннотационных транзакций. Не полагаться на self-invocation @Transactional-метода через this. После SQL-ошибки сначала завершить rollback; читать receipt в новой транзакции. Не переносить receipt в независимую транзакцию записи.
-
-## Что не добавлять
-
-Axon, JPA/Hibernate, Spring Data ради имени Repository, MapStruct, Lombok, универсальный command bus, асинхронную CQRS-инфраструктуру, Kafka, outbox, Saga, Temporal, snapshots и кэш не вводить. Не менять существующий HTTP-контракт или события ради переименования Java-классов. При рефакторинге сохранить стабильные event_type и schema_version.
-
-## Angular UI
-
-В `frontend` размещён отдельный локальный Angular-клиент существующего API. Он использует сохранённые бизнес-маршруты и диагностический /comparison. `WalletApiService` отвечает за HTTP и проверку
-ответов; standalone components разделяют выбор, текущее состояние, операции, историю,
-исторический просмотр, сравнение моделей и панель последней команды. `AppComponent` координирует экран через signals.
-Reactive forms используются для ввода. Java-пары интерфейс/Impl на frontend не переносятся.
-Кошельки не перечисляются через новый endpoint: «Недавно открытые» — только UUID в localStorage.
-Точное описание границ клиента — [frontend.md](frontend.md).
-
-## Транзакции шага 2
-
-Команда: внешний TransactionTemplate READ COMMITTED / REQUIRES_NEW сохранён.
-CAS → событие → WalletReadModelProjector → receipt используют один DataSource и один commit.
-Проектор и репозитории не открывают отдельные транзакции. Ошибка проекции — rollback всей команды.
-Готовый receipt возвращается без повторного вызова проектора.
-
-Запросы WalletQueryServiceImpl используют read-only REPEATABLE READ / REQUIRES_NEW на весь запрос.
-В /comparison непосредственно вызываются EventStore.load и WalletReadModelRepository.find внутри
-одного callback; get/другие сервисы с новой транзакцией из него не вызываются.
-Обычный GET выполняет SELECT проекции; только при её отсутствии проверяет наличие потока без replay.
-
-Запуск рассчитан на чистую БД: Liquibase создаёт все таблицы до приёма HTTP-запросов.
-Проекция создаётся первой командой каждого кошелька и обновляется последующими командами.
-Отдельного CLI-профиля и сервиса восстановления нет. Инструкция — [LEARNING.md](LEARNING.md).
+Пауза (`/api/projection-handler/pause`) относится только к текущему экземпляру. Это учебный
+контроль, а не распределённая блокировка.

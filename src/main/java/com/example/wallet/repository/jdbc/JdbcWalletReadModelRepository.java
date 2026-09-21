@@ -68,7 +68,7 @@ public class JdbcWalletReadModelRepository implements WalletReadModelRepository 
     private static void requireWriteTransaction() {
         if (!TransactionSynchronizationManager.isActualTransactionActive()
                 || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
-            throw new IllegalStateException("Запись проекции требует транзакцию команды");
+            throw new IllegalStateException("Запись проекции требует транзакцию обработчика");
         }
     }
 }

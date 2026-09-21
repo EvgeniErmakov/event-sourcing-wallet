@@ -1,7 +1,8 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { ApiFailure, describeError, WalletApiService } from './api/wallet-api.service';
+import { ChangeDetectionStrategy, Component, computed, inject, OnDestroy, OnInit, signal } from '@angular/core';
+import { ApiFailure, decodeWallet, describeError, WalletApiService } from './api/wallet-api.service';
 import {
-    CommandBody, CommandKind, LastOperation, MoneyIntent, RecentWallet, SavedCommand, WalletEvent, WalletState,
+    CommandBody, CommandKind, LastOperation, MoneyIntent, ProjectionHandlerStatus, RecentWallet, SavedCommand,
+    WalletComparison, WalletEvent, WalletState,
 } from './api/wallet.models';
 import { EventHistoryComponent } from './components/event-history.component';
 import { HistoricalStateComponent } from './components/historical-state.component';
@@ -23,12 +24,14 @@ const RECENT_KEY = 'wallet-ui.recent.v1';
     templateUrl: './app.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class AppComponent {
+export class AppComponent implements OnDestroy, OnInit {
     private readonly api = inject(WalletApiService);
     private selectionGeneration = 0;
     private stateGeneration = 0;
     private historyGeneration = 0;
     private historyCursor = 0;
+    private readPollInFlight = false;
+    private readonly readPollTimer = window.setInterval(() => void this.pollReadSide(), 3000);
 
     readonly selected = signal<string | null>(null);
     readonly comparisonContext = signal(0);
@@ -47,14 +50,23 @@ export class AppComponent {
     readonly lastOperation = signal<LastOperation | null>(null);
     readonly storageMessage = signal('');
     readonly recent = signal<readonly RecentWallet[]>(this.readRecent());
+    readonly handler = signal<ProjectionHandlerStatus | null>(null);
+    readonly handlerError = signal('');
+    readonly commandWriteVersion = signal(0);
+    readonly comparisonLagging = signal(false);
     readonly uncertain = computed(() => this.lastOperation()?.uncertain ?? false);
     readonly createDisabled = computed(() => this.busy() || this.uncertain());
     readonly blockedReason = computed(() => {
         if (this.busy()) return 'Дождитесь ответа на отправленную команду.';
         if (this.uncertain()) return 'Результат последней команды неизвестен. Повторите сохранённый запрос с прежним ключом.';
         if (this.stateLoading()) return 'Загружается актуальное состояние.';
-        if (this.needsRefresh()) return 'Перед новой командой обновите состояние.';
+        if (this.stateError()) return 'Текущее состояние read model недоступно. Обновите чтение.';
         const wallet = this.wallet();
+        if (wallet && this.commandWriteVersion() > wallet.version) {
+            return 'Проекция догоняет последнее событие. Дождитесь обновления read model.';
+        }
+        if (this.comparisonLagging()) return 'Диагностика показывает отставание проекции. Дождитесь её сходимости.';
+        if (this.needsRefresh()) return 'Перед новой командой обновите состояние.';
         if (!wallet) return 'Откройте кошелёк с доступным текущим состоянием.';
         if (wallet.status === 'CLOSED') return 'Кошелёк закрыт. История и просмотр прошлых версий доступны.';
         if (wallet.version >= MAX_SAFE_VALUE) return 'Следующая версия выйдет за безопасный диапазон UI. Команды отключены.';
@@ -111,7 +123,7 @@ export class AppComponent {
     async refresh(): Promise<void> {
         if (!this.selected()) return;
         this.comparisonContext.update(value => value + 1);
-        await Promise.all([this.loadState(), this.loadHistory(true)]);
+        await Promise.all([this.loadState(), this.loadHistory(true), this.loadHandler()]);
     }
 
     async loadHistory(reset = false): Promise<void> {
@@ -163,6 +175,8 @@ export class AppComponent {
         this.operationError.set('');
         this.operationMessage.set('');
         this.needsRefresh.set(false);
+        this.commandWriteVersion.set(0);
+        this.comparisonLagging.set(false);
     }
 
     private command(kind: CommandKind, walletId: string, suffix: string, body: CommandBody): SavedCommand {
@@ -191,6 +205,12 @@ export class AppComponent {
                 : 'Команда успешно завершена сервером.';
             this.lastOperation.set({ request, pending: false, uncertain: false, repeated,
                 status: response.status, responseBody: response.body ?? '', message });
+            try {
+                const commandState = decodeWallet(response.body ?? '', request.walletId);
+                this.commandWriteVersion.set(Math.max(this.commandWriteVersion(), commandState.version));
+            } catch {
+                // Сохраняем исходный текст receipt; отдельный GET остаётся источником read model.
+            }
             this.remember(request.walletId);
             if (selection === this.selectionGeneration && this.selected() === request.walletId) {
                 this.operationMessage.set(message);
@@ -231,7 +251,6 @@ export class AppComponent {
         const generation = ++this.stateGeneration;
         this.stateLoading.set(true);
         this.stateError.set('');
-        this.wallet.set(null);
         try {
             const state = await this.api.getWallet(id);
             if (selection !== this.selectionGeneration || generation !== this.stateGeneration) return;
@@ -244,6 +263,50 @@ export class AppComponent {
         } finally {
             if (selection === this.selectionGeneration && generation === this.stateGeneration) this.stateLoading.set(false);
         }
+    }
+
+    private async pollReadSide(): Promise<void> {
+        if (!this.selected() || this.readPollInFlight || this.busy()) return;
+        this.readPollInFlight = true;
+        try {
+            await Promise.all([this.loadState(), this.loadHandler()]);
+            this.comparisonContext.update(value => value + 1);
+        } finally {
+            this.readPollInFlight = false;
+        }
+    }
+
+    async toggleHandler(): Promise<void> {
+        const current = this.handler();
+        if (!current) return;
+        this.handlerError.set('');
+        try {
+            this.handler.set(current.paused || current.pauseRequested
+                ? await this.api.resumeProjectionHandler() : await this.api.pauseProjectionHandler());
+        } catch (error: unknown) {
+            this.handlerError.set(describeError(error));
+        }
+    }
+
+    onComparison(result: WalletComparison | null): void {
+        this.comparisonLagging.set(result !== null && (result.status === 'LAGGING' || result.readModel === null));
+    }
+
+    private async loadHandler(): Promise<void> {
+        try {
+            this.handler.set(await this.api.getProjectionHandler());
+            this.handlerError.set('');
+        } catch (error: unknown) {
+            this.handlerError.set(describeError(error));
+        }
+    }
+
+    ngOnInit(): void {
+        void this.loadHandler();
+    }
+
+    ngOnDestroy(): void {
+        window.clearInterval(this.readPollTimer);
     }
 
     private readRecent(): readonly RecentWallet[] {

@@ -4,11 +4,13 @@ import java.time.Clock;
 import org.springframework.boot.jackson.autoconfigure.JsonMapperBuilderCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.MapperFeature;
 
 /** Часы внедряются вне replay; строгий JSON не допускает округление денег и версий. */
 @Configuration(proxyBeanMethods = false)
+@EnableScheduling
 public class WalletConfiguration {
     @Bean
     public Clock walletClock() {

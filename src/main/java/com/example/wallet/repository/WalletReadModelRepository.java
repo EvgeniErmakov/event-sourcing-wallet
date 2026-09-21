@@ -4,7 +4,7 @@ import com.example.wallet.service.model.WalletReadModel;
 import java.util.Optional;
 import java.util.UUID;
 
-/** JDBC-контракт производной таблицы. Запись допускается только внутри транзакции команды. */
+/** JDBC-контракт производной таблицы. Запись допускается только внутри транзакции обработчика. */
 public interface WalletReadModelRepository {
     /** Читает текущую проекцию без replay или автоматического восстановления. */
     Optional<WalletReadModel> find(UUID walletId);

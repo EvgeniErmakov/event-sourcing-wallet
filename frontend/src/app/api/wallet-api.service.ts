@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse, HttpResponse } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { firstValueFrom, timeout } from 'rxjs';
-import { EventPage, ProblemDetail, SavedCommand, WalletComparison, WalletEvent, WalletState } from './wallet.models';
+import { EventPage, ProblemDetail, ProjectionHandlerStatus, SavedCommand, WalletComparison, WalletEvent, WalletState } from './wallet.models';
 import { NumericRangeError, parseSafeJson, UUID_PATTERN } from '../shared/numbers';
 
 export class ApiFailure extends Error {
@@ -26,6 +26,7 @@ const MESSAGES: Readonly<Record<string, string>> = {
     INVALID_REQUEST: 'Сервер отклонил параметры запроса. Проверьте введённые значения.',
     CORRUPT_HISTORY: 'Сервер обнаружил ошибку целостности истории.',
     PROJECTION_INTEGRITY_ERROR: 'Модель чтения отсутствует или повреждена. Нарушена целостность данных; проверьте журнал сервера.',
+    PROJECTION_NOT_READY: 'Кошелёк создан, проекция ещё не готова. Подождите обработки событий.',
     INTERNAL_ERROR: 'Внутренняя ошибка сервера. Подробности доступны в его журнале.',
 };
 
@@ -59,14 +60,30 @@ function decodeWalletValue(data: unknown, id: string): WalletState {
 /** Сначала проверяются все JSON-числа, затем обе независимые модели и согласованность признака совпадения. */
 function decodeComparison(raw: string, id: string): WalletComparison {
     const data = parseSafeJson(raw);
-    if (!isRecord(data) || typeof data['matches'] !== 'boolean') throw invalidResponse();
+    if (!isRecord(data) || typeof data['matches'] !== 'boolean' || !safeInteger(data['streamVersion'], 1)
+        || !safeInteger(data['projectionVersion'], 0) || !safeInteger(data['pendingEvents'], 0)
+        || !['MATCHED', 'LAGGING'].includes(String(data['status']))) throw invalidResponse();
     const eventState = decodeWalletValue(data['eventState'], id);
     const readModel = data['readModel'] === null ? null : decodeWalletValue(data['readModel'], id);
+    if (data['streamVersion'] !== eventState.version
+        || (readModel !== null && data['projectionVersion'] !== readModel.version)) throw invalidResponse();
     const matches = readModel !== null && eventState.balanceMinor === readModel.balanceMinor
         && eventState.currency === readModel.currency && eventState.status === readModel.status
         && eventState.version === readModel.version;
-    if (matches !== data['matches']) throw invalidResponse();
-    return { eventState, readModel, matches };
+    if (matches !== data['matches'] || data['pendingEvents'] !== data['streamVersion'] - data['projectionVersion']) {
+        throw invalidResponse();
+    }
+    return { eventState, readModel, streamVersion: data['streamVersion'], projectionVersion: data['projectionVersion'],
+        pendingEvents: data['pendingEvents'], status: data['status'] as WalletComparison['status'], matches };
+}
+
+function decodeHandlerStatus(raw: string): ProjectionHandlerStatus {
+    const data = parseSafeJson(raw);
+    if (!isRecord(data) || !['RUNNING', 'PAUSE_REQUESTED', 'PAUSED', 'IDLE'].includes(String(data['status']))
+        || typeof data['paused'] !== 'boolean' || typeof data['pauseRequested'] !== 'boolean'
+        || typeof data['processing'] !== 'boolean'
+        || (data['lastError'] !== null && typeof data['lastError'] !== 'string')) throw invalidResponse();
+    return data as unknown as ProjectionHandlerStatus;
 }
 
 function decodeEvents(raw: string, id: string, afterVersion: number): EventPage {
@@ -111,6 +128,21 @@ export class WalletApiService {
     async getComparison(id: string): Promise<WalletComparison> {
         const response = await this.request('GET', `/api/wallets/${id}/comparison`);
         return decodeComparison(response.body ?? '', id);
+    }
+
+    async getProjectionHandler(): Promise<ProjectionHandlerStatus> {
+        const response = await this.request('GET', '/api/projection-handler');
+        return decodeHandlerStatus(response.body ?? '');
+    }
+
+    async pauseProjectionHandler(): Promise<ProjectionHandlerStatus> {
+        const response = await this.request('POST', '/api/projection-handler/pause');
+        return decodeHandlerStatus(response.body ?? '');
+    }
+
+    async resumeProjectionHandler(): Promise<ProjectionHandlerStatus> {
+        const response = await this.request('POST', '/api/projection-handler/resume');
+        return decodeHandlerStatus(response.body ?? '');
     }
 
     send(command: SavedCommand): Promise<HttpResponse<string>> {

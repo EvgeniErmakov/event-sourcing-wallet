@@ -66,6 +66,17 @@ export interface RecentWallet { readonly id: string; }
 export interface WalletComparison {
     readonly eventState: WalletState;
     readonly readModel: WalletState | null;
+    readonly streamVersion: number;
+    readonly projectionVersion: number;
+    readonly pendingEvents: number;
+    readonly status: 'MATCHED' | 'LAGGING';
     readonly matches: boolean;
+}
+export interface ProjectionHandlerStatus {
+    readonly status: 'RUNNING' | 'PAUSE_REQUESTED' | 'PAUSED' | 'IDLE';
+    readonly paused: boolean;
+    readonly pauseRequested: boolean;
+    readonly processing: boolean;
+    readonly lastError: string | null;
 }
 export interface MoneyIntent { readonly operation: MoneyOperation; readonly amountMinor: number; }

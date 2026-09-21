@@ -8,9 +8,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
 /**
- * Синхронно применяет уже принятые факты внутри транзакции новой команды.
+ * Применяет уже принятые факты внутри отдельной транзакции фонового обработчика.
  * Не вызывает decide, не читает receipt, не генерирует событий и не открывает транзакций.
- * Ошибка порядка, ограничений или BIGINT-арифметики откатывает всю внешнюю транзакцию.
+ * Ошибка порядка, ограничений или BIGINT-арифметики откатывает проекцию и позицию этой порции.
  */
 @Component
 public class WalletReadModelProjector {
@@ -45,10 +45,12 @@ public class WalletReadModelProjector {
                 case WalletEvent.WalletClosed ignored -> models.close(walletId, eventVersion);
             };
             if (updated != 1) {
-                throw new ProjectionIntegrityException("Отсутствующая строка, неверное состояние или версия проекции: " + walletId);
+                throw new ProjectionIntegrityException("Отсутствующая строка, неверное состояние или версия проекции: walletId="
+                        + walletId + ", eventVersion=" + eventVersion);
             }
         } catch (DataIntegrityViolationException error) {
-            throw new ProjectionIntegrityException("Нарушение ограничений или переполнение проекции: " + walletId, error);
+            throw new ProjectionIntegrityException("Нарушение ограничений или переполнение проекции: walletId="
+                    + walletId + ", eventVersion=" + eventVersion, error);
         }
     }
 
