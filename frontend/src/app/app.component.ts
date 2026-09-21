@@ -41,6 +41,7 @@ export class AppComponent implements OnDestroy, OnInit {
 
     readonly selected = signal<string | null>(null);
     readonly comparisonContext = signal(0);
+    readonly comparisonPollingContext = signal(0);
     readonly wallet = signal<WalletState | null>(null);
     readonly stateLoading = signal(false);
     readonly stateError = signal('');
@@ -61,15 +62,10 @@ export class AppComponent implements OnDestroy, OnInit {
     readonly knownWriteVersions = signal<Readonly<Record<string, number>>>({});
     readonly comparisonLaggingByWallet = signal<Readonly<Record<string, boolean>>>({});
     readonly uncertain = computed(() => this.lastOperation()?.uncertain ?? false);
-    readonly selectedUncertain = computed(() => {
-        const selected = this.selected();
-        const operation = this.lastOperation();
-        return selected !== null && operation?.request.walletId === selected && operation?.uncertain === true;
-    });
-    readonly createDisabled = computed(() => this.busy() || this.selectedUncertain());
+    readonly createDisabled = computed(() => this.busy() || this.uncertain());
     readonly blockedReason = computed(() => {
         if (this.busy()) return 'Дождитесь ответа на отправленную команду.';
-        if (this.selectedUncertain()) return 'Результат команды этого кошелька неизвестен. Повторите сохранённый запрос с прежним ключом.';
+        if (this.uncertain()) return 'Результат команды неизвестен. Повторите сохранённый запрос с прежним ключом перед новой командой.';
         if (this.stateLoading()) return 'Загружается актуальное состояние.';
         if (this.stateError()) return 'Текущее состояние read model недоступно. Обновите чтение.';
         const wallet = this.wallet();
@@ -240,12 +236,12 @@ export class AppComponent implements OnDestroy, OnInit {
         }
     }
 
-    private async loadState(): Promise<void> {
+    private async loadState(queueIfBusy = true): Promise<void> {
         const id = this.selected();
         if (!id) return;
         const current = this.stateRequest;
         if (current && current.walletId === id && current.selection === this.selectionGeneration) {
-            current.queued = true;
+            if (queueIfBusy) current.queued = true;
             return current.promise;
         }
         const request: StateRequest = {
@@ -282,6 +278,7 @@ export class AppComponent implements OnDestroy, OnInit {
                     await this.runState(request);
                 } else {
                     this.stateLoading.set(false);
+                    if (this.stateRequest === request) this.stateRequest = null;
                 }
             }
         }
@@ -319,6 +316,7 @@ export class AppComponent implements OnDestroy, OnInit {
                     await this.runHistory(request);
                 } else {
                     this.historyLoading.set(false);
+                    if (this.historyRequest === request) this.historyRequest = null;
                 }
             }
         }
@@ -329,8 +327,8 @@ export class AppComponent implements OnDestroy, OnInit {
             await this.loadHandler();
             return;
         }
-        this.comparisonContext.update(value => value + 1);
-        await Promise.all([this.loadState(), this.loadHandler()]);
+        this.comparisonPollingContext.update(value => value + 1);
+        await Promise.all([this.loadState(false), this.loadHandler(false)]);
     }
 
     async toggleHandler(): Promise<void> {
@@ -364,15 +362,15 @@ export class AppComponent implements OnDestroy, OnInit {
         }));
     }
 
-    private async loadHandler(): Promise<void> {
+    private async loadHandler(queueIfBusy = true): Promise<void> {
         if (this.handlerActionInFlight()) return;
-        return this.fetchHandlerStatus();
+        return this.fetchHandlerStatus(false, queueIfBusy);
     }
 
-    private async fetchHandlerStatus(afterAction = false): Promise<void> {
+    private async fetchHandlerStatus(afterAction = false, queueIfBusy = true): Promise<void> {
         const current = this.handlerRequest;
         if (current && current.epoch === this.handlerEpoch && current.allowDuringAction === afterAction) {
-            current.queued = true;
+            if (queueIfBusy) current.queued = true;
             return current.promise;
         }
         const request: HandlerRequest = {

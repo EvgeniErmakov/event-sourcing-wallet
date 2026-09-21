@@ -54,9 +54,12 @@ export class ModelComparisonComponent implements OnDestroy {
     private walletGeneration = 0;
     private activeRequest: ComparisonRequest | null = null;
     private lastWalletId: string | null | undefined;
+    private lastPollingContext = 0;
+    private lastManualContext = 0;
     private destroyed = false;
     readonly walletId = input.required<string | null>();
     readonly context = input.required<number>();
+    readonly pollingContext = input(0);
     readonly busy = input(false);
     readonly comparison = signal<WalletComparison | null>(null);
     readonly loading = signal(false);
@@ -67,7 +70,11 @@ export class ModelComparisonComponent implements OnDestroy {
     constructor() {
         effect(() => {
             const id = this.walletId();
-            this.context();
+            const manualContext = this.context();
+            const pollingContext = this.pollingContext();
+            const polling = pollingContext !== this.lastPollingContext && manualContext === this.lastManualContext;
+            this.lastPollingContext = pollingContext;
+            this.lastManualContext = manualContext;
             if (id !== this.lastWalletId) {
                 this.lastWalletId = id;
                 ++this.walletGeneration;
@@ -75,7 +82,7 @@ export class ModelComparisonComponent implements OnDestroy {
                 this.error.set('');
                 this.loading.set(false);
             }
-            this.requestRefresh(id);
+            this.requestRefresh(id, !polling);
         });
     }
 
@@ -85,14 +92,14 @@ export class ModelComparisonComponent implements OnDestroy {
      */
     async refresh(): Promise<void> {
         const id = this.walletId();
-        this.requestRefresh(id);
+        this.requestRefresh(id, true);
     }
 
-    private requestRefresh(id: string | null): void {
+    private requestRefresh(id: string | null, queueIfBusy: boolean): void {
         if (!id) return;
         const current = this.activeRequest;
         if (current && current.walletId === id && current.walletGeneration === this.walletGeneration) {
-            current.queued = true;
+            if (queueIfBusy) current.queued = true;
             return;
         }
         const request: ComparisonRequest = {
@@ -124,6 +131,8 @@ export class ModelComparisonComponent implements OnDestroy {
                 if (request.queued) {
                     request.queued = false;
                     void this.run(request);
+                } else if (this.activeRequest === request) {
+                    this.activeRequest = null;
                 }
             }
         }
