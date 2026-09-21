@@ -2,6 +2,7 @@ package com.example.wallet.exception.api;
 
 import com.example.wallet.exception.domain.CorruptHistoryException;
 import com.example.wallet.exception.domain.WalletException;
+import com.example.wallet.exception.infrastructure.ProjectionIntegrityException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import java.net.URI;
@@ -42,6 +43,14 @@ public class ApiExceptionHandler {
     public ResponseEntity<ProblemDetail> corrupt(CorruptHistoryException error, HttpServletRequest request) {
         log.error("Нарушение целостности истории или receipt", error);
         return problem(HttpStatus.INTERNAL_SERVER_ERROR, "CORRUPT_HISTORY", "Ошибка целостности сохранённых данных", request);
+    }
+
+    /** Отсутствующая или повреждённая производная модель — ошибка подготовки/целостности, а не 404 кошелька. */
+    @ExceptionHandler(ProjectionIntegrityException.class)
+    public ResponseEntity<ProblemDetail> projection(ProjectionIntegrityException error, HttpServletRequest request) {
+        log.error("Нарушение целостности проекции", error);
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "PROJECTION_INTEGRITY_ERROR",
+                "Модель чтения отсутствует или повреждена; нарушена целостность данных", request);
     }
 
     /** Преобразует ошибки чтения тела и параметров в прежний INVALID_REQUEST. */

@@ -84,7 +84,7 @@ public class JdbcEventStore implements EventStore {
      * UPDATE-CAS блокирует строку и повторно проверяет условие после ожидания конкурента.
      * Нулевой результат не допускает запись события. Для создания PK разрешает гонку
      * вставок; ON CONFLICT направлен только на этот PK. Исключение заставляет сервис
-     * откатить и CAS, и INSERT, и receipt. Здесь нет commit и чтения результата конкурента.
+     * откатить CAS, INSERT события, проекцию и receipt. Здесь нет commit и чтения результата конкурента.
      */
     @Override
     public void append(UUID walletId, long expectedVersion, WalletEvent event, UUID eventId,
@@ -155,6 +155,13 @@ public class JdbcEventStore implements EventStore {
             previous = event.streamVersion();
         }
         return List.copyOf(page);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean streamExists(UUID walletId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM event_streams WHERE stream_id = :id)", Map.of("id", walletId), Boolean.class));
     }
 
     private StoredEvent map(ResultSet rs) throws SQLException {

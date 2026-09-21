@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse, HttpResponse } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { firstValueFrom, timeout } from 'rxjs';
-import { EventPage, ProblemDetail, SavedCommand, WalletEvent, WalletState } from './wallet.models';
+import { EventPage, ProblemDetail, SavedCommand, WalletComparison, WalletEvent, WalletState } from './wallet.models';
 import { NumericRangeError, parseSafeJson, UUID_PATTERN } from '../shared/numbers';
 
 export class ApiFailure extends Error {
@@ -25,6 +25,7 @@ const MESSAGES: Readonly<Record<string, string>> = {
     BALANCE_OVERFLOW: 'Сумма превышает допустимый баланс сервера.',
     INVALID_REQUEST: 'Сервер отклонил параметры запроса. Проверьте введённые значения.',
     CORRUPT_HISTORY: 'Сервер обнаружил ошибку целостности истории.',
+    PROJECTION_INTEGRITY_ERROR: 'Модель чтения отсутствует или повреждена. Нарушена целостность данных; проверьте журнал сервера.',
     INTERNAL_ERROR: 'Внутренняя ошибка сервера. Подробности доступны в его журнале.',
 };
 
@@ -45,11 +46,27 @@ function invalidResponse(): Error {
 }
 
 export function decodeWallet(raw: string, id: string): WalletState {
-    const data = parseSafeJson(raw);
+    return decodeWalletValue(parseSafeJson(raw), id);
+}
+
+function decodeWalletValue(data: unknown, id: string): WalletState {
     if (!isRecord(data) || data['walletId'] !== id || data['currency'] !== 'RUB'
         || !['ACTIVE', 'CLOSED'].includes(String(data['status']))
         || !safeInteger(data['balanceMinor'], 0) || !safeInteger(data['version'], 1)) throw invalidResponse();
     return data as unknown as WalletState;
+}
+
+/** Сначала проверяются все JSON-числа, затем обе независимые модели и согласованность признака совпадения. */
+function decodeComparison(raw: string, id: string): WalletComparison {
+    const data = parseSafeJson(raw);
+    if (!isRecord(data) || typeof data['matches'] !== 'boolean') throw invalidResponse();
+    const eventState = decodeWalletValue(data['eventState'], id);
+    const readModel = data['readModel'] === null ? null : decodeWalletValue(data['readModel'], id);
+    const matches = readModel !== null && eventState.balanceMinor === readModel.balanceMinor
+        && eventState.currency === readModel.currency && eventState.status === readModel.status
+        && eventState.version === readModel.version;
+    if (matches !== data['matches']) throw invalidResponse();
+    return { eventState, readModel, matches };
 }
 
 function decodeEvents(raw: string, id: string, afterVersion: number): EventPage {
@@ -89,6 +106,11 @@ export class WalletApiService {
     async getEvents(id: string, afterVersion: number): Promise<EventPage> {
         const response = await this.request('GET', `/api/wallets/${id}/events?afterVersion=${afterVersion}&limit=20`);
         return decodeEvents(response.body ?? '', id, afterVersion);
+    }
+
+    async getComparison(id: string): Promise<WalletComparison> {
+        const response = await this.request('GET', `/api/wallets/${id}/comparison`);
+        return decodeComparison(response.body ?? '', id);
     }
 
     send(command: SavedCommand): Promise<HttpResponse<string>> {

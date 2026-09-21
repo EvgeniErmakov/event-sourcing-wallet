@@ -1,6 +1,6 @@
 # event-sourcing-wallet
 
-Учебный сервис кошельков на Java 25 с собственной реализацией Event Sourcing.
+Учебный сервис кошельков на Java 25: этап `02-cqrs-sync`, Event Sourcing + синхронный CQRS.
 Реализованы создание, пополнение, списание, закрытие, чтение текущего и исторического
 состояния, история событий, optimistic locking и постоянная идемпотентность.
 В отдельной директории `frontend` — компактный Angular UI на русском языке для ручного изучения этих операций.
@@ -8,7 +8,7 @@
 
 Документы: [спецификация и статус](docs/PROJECT.md),
 [теория Event Sourcing с примерами](docs/theory/event-sourcing-theory.md),
-[исходные полные требования](PROJECT.md), [правила разработки](AGENTS.md).
+[учебный маршрут и запуск](docs/LEARNING.md), [исторические требования шага 1](PROJECT.md), [правила разработки](AGENTS.md).
 Отдельных файлов промптов в исходном репозитории нет; существующие документы сохранены.
 
 ## Версии и требования
@@ -41,6 +41,9 @@ PostgreSQL выбран из [стабильных выпусков](https://www
 
 ## Локальный запуск
 
+Этап рассчитан на чистую БД. Её пересоздание пользователь выполняет самостоятельно.
+Приложение создаёт схему через Liquibase; никакого предварительного CLI-запуска не требуется.
+
 Из корня репозитория:
 
 ```bash
@@ -57,7 +60,9 @@ java -jar build/libs/event-sourcing-wallet-0.1.0.jar
 ```
 
 Приложение слушает порт 28741, API находится под `/api/wallets`.
-Liquibase применяет три changeset из `001-wallet.sql` через YAML master changelog.
+Liquibase сохраняет три changeset из `001-wallet.sql` и добавляет ES-1 для wallet_read_model через XML-индекс из прежнего YAML master.
+На пустой БД создаются event_streams, wallet_events, command_receipts и wallet_read_model.
+Проекция наполняется синхронно при выполнении новых команд.
 Это единственный механизм создания схемы; basic SQL initialization отключена (`mode: never`).
 Для `bootJar` работающая БД не нужна; для запуска приложения PostgreSQL необходима.
 
@@ -78,9 +83,20 @@ Docker bridge здесь не обеспечивает подключение к
 Если `DB_URL` или `SERVER_PORT` ранее заданы в терминале/IDE, обновите или удалите их:
 они имеют приоритет над конфигурацией проекта. URL базы — `jdbc:postgresql://127.0.0.1:28742/wallet`.
 
+## Инициализация чистой БД
+
+Liquibase при обычном старте создаёт сначала три таблицы Event Sourcing из `001-wallet.sql`,
+затем `wallet_read_model` из ES-1. Схема готова до приёма запросов. Команда создания кошелька
+сохраняет первое событие и строку проекции одной транзакцией. Специальный профиль и отдельное
+заполнение проекции не нужны. При повторном старте применённые миграции не выполняются заново.
+
+Режим переноса данных шага 1 и CLI-восстановление удалены по решению пользователя.
+Приложение не пересоздаёт БД и не удаляет данные автоматически. Порядок изучения —
+[LEARNING.md](docs/LEARNING.md).
+
 ## Angular UI
 
-Frontend не меняет API и не требует CORS: Angular dev proxy перенаправляет `/api/**`
+Frontend использует прежние бизнес-маршруты и новый /comparison, не требует CORS: Angular dev proxy перенаправляет `/api/**`
 на `http://127.0.0.1:28741`. Настройка находится в [frontend/proxy.conf.json](frontend/proxy.conf.json).
 Если запускаете Spring Boot с другим портом (`SERVER_PORT`), измените target и перезапустите frontend.
 
@@ -123,7 +139,9 @@ Node 24.12 слишком стар для этого Angular; выбран Node 
 5. Раскройте **«Последнюю операцию»** и нажмите **«Повторить тот же запрос»**.
    Метод, URL, JSON и ключ сохраняются. Успешный повтор возвращает первоначальный ответ,
    новое событие не создаётся. UI отдельно перечитает актуальное состояние и историю выбранного кошелька.
-6. Для закрытия спишите остаток и подтвердите **«Закрыть кошелёк»**. История останется доступна.
+6. Нажмите **«Обновить сравнение»**: обе модели должны совпасть по балансу, валюте, статусу и версии.
+   Сравнение выполняется только по кнопке; отсутствующая проекция явно показана как проблема.
+7. Для закрытия спишите остаток и подтвердите **«Закрыть кошелёк»**. История останется доступна.
 
 Можно открыть существующий UUID. «Недавно открытые» хранит только до 12 идентификаторов
 в localStorage этого браузера, без обращения к несуществующему endpoint списка кошельков.
@@ -163,9 +181,9 @@ npm run build
 [точное преобразование денег](frontend/src/app/shared/numbers.ts),
 [компоненты](frontend/src/app/components).
 
-В рамках добавления UI выполнены установка зависимостей и production-сборка `npm run build`
-на Node 24.21.0. Бэкенд не изменялся и повторно не собирался. Тесты, браузерные и API-сценарии
-не создавались и не запускались по запросу пользователя. Сборка не является проверкой поведения.
+На этапе CQRS выполнены `./gradlew bootJar` на JDK 25.0.3 и production-сборка `npm run build`
+с доступным Node 24.19.0 (зависимости и требуемая проектом версия 24.21.0 не менялись).
+Тесты, браузерные и API-сценарии не создавались и не запускались. Сборка не проверяет поведение.
 
 ## Настройки окружения
 
@@ -210,9 +228,10 @@ docker compose stop postgres
 2. [Wallet](src/main/java/com/example/wallet/domain/Wallet.java) — `decide`, `apply`, `rehydrate`.
    `decide` проверяет новую команду, не меняя агрегат; `apply` меняет состояние фактом;
    `rehydrate` создаёт новый объект и последовательно применяет прошлые факты.
-3. [WalletService](src/main/java/com/example/wallet/service/WalletService.java) — прикладной контракт;
-   [WalletServiceImpl](src/main/java/com/example/wallet/service/impl/WalletServiceImpl.java) — полный сценарий,
-   commit до ответа, rollback до повторного чтения receipt, GET через replay.
+3. [WalletCommandServiceImpl](src/main/java/com/example/wallet/service/impl/WalletCommandServiceImpl.java) — команды,
+   commit до ответа, rollback до повторного receipt;
+   [WalletQueryServiceImpl](src/main/java/com/example/wallet/service/impl/WalletQueryServiceImpl.java) — GET и сравнение.
+   [WalletReadModelProjector](src/main/java/com/example/wallet/service/WalletReadModelProjector.java) — синхронная проекция.
 4. [EventStore](src/main/java/com/example/wallet/repository/EventStore.java) и
    [JdbcEventStore](src/main/java/com/example/wallet/repository/jdbc/JdbcEventStore.java) — граница
    хранения, SQL одного снимка, проверка непрерывности и атомарный CAS.
@@ -240,14 +259,14 @@ docker compose stop postgres
 
 | Пакет | Ответственность |
 |---|---|
-| `controller` | REST и зависимость от интерфейса WalletService |
+| `controller` | REST и интерфейсы WalletCommandService / WalletQueryService |
 | `dto.request`, `dto.response` | HTTP records с прежними JSON-полями |
 | `service`, `service.impl` | Контракт сценариев и реализация транзакционной границы |
-| `service.model` | WalletState, CommandReceipt, StoredEvent и EventPage |
+| `service.model` | WalletState, WalletReadModel, WalletComparison, CommandReceipt, StoredEvent и EventPage |
 | `domain`, `domain.command`, `domain.event` | Агрегат, намерения и факты |
 | `repository`, `repository.jdbc` | Контракты хранения и параметризованный JDBC |
 | `serialization` | Реестр стабильных имён и JSON событий |
-| `exception.domain`, `exception.api` | Чистые Java-исключения и ProblemDetail |
+| `exception.domain`, `exception.infrastructure`, `exception.api` | Чистые Java-исключения и ProblemDetail |
 | `config` | Clock, строгий JSON и преобразование UUID |
 
 [WalletResponseDto](src/main/java/com/example/wallet/dto/response/WalletResponseDto.java) и
@@ -262,10 +281,9 @@ CorruptHistoryException остаётся чистым Java-исключение�
 открывает новую транзакцию чтения. Запись receipt остаётся внутри транзакции события.
 INFO о выполненной команде пишется после commit, повтор receipt отмечается только на DEBUG.
 
-При рефакторинге схема не менялась. Исторические файлы
-`db/changelog/db.changelog-master.yaml` и `db/changelog/001-wallet.sql` сохранены вместе
-с путями, порядком и содержимым changeset. Следующие реальные изменения схемы оформляются
-по [database.md](docs/database.md); фиктивной миграции для переноса Java-классов нет.
+Новая миграция: `liquibase/changelog/2026.09/2026.09.21_ES-1_wallet_read_model.sql`.
+Прежний YAML master дополнен подключением месячного XML; `001-wallet.sql` и идентичность
+его changeset сохранены. Подробности — [database.md](docs/database.md).
 
 ## События, таблицы и транзакция
 
@@ -274,10 +292,11 @@ INFO о выполненной команде пишется после commit, 
 | `event_streams` | UUID и техническая `current_version` для CAS; без баланса и статуса |
 | `wallet_events` | Неизменяемые факты с уникальным `(stream_id, stream_version)` |
 | `command_receipts` | Глобальный ключ, fingerprint, исходные статус/тело успешного ответа |
+| `wallet_read_model` | Производное текущее состояние и last_event_version для обычного GET |
 
-Источник истины — только последовательность `wallet_events`. Таблица балансов с журналом
-операций не дала бы такого свойства: чтение баланса обходило бы восстановление из фактов.
-Здесь каждый GET читает события из PostgreSQL. События упорядочены по `stream_version`,
+Источник истины — последовательность `wallet_events`. Команды восстанавливают Wallet из событий,
+обычный GET читает синхронную проекцию, производную от фактов. Исторический GET и
+явное сравнение читают события из PostgreSQL. События упорядочены по `stream_version`,
 начиная с 1, а не по времени; одинаковые времена допустимы.
 
 `WalletCreated` содержит `currency`, `MoneyDeposited`/`MoneyWithdrawn` — `amountMinor`,
@@ -299,7 +318,7 @@ Replay не читает часы, не генерирует UUID, не запу
 4. Для создания вставляется поток с версией 0. Для всех команд выполняется
    `UPDATE event_streams SET current_version = current_version + 1
    WHERE stream_id = :id AND current_version = :expected`.
-5. Вставляются событие и receipt. После commit сервис возвращает успех. При ошибке
+5. Вставляется событие, проектор обновляет wallet_read_model, затем вставляется receipt. После commit сервис возвращает успех. При ошибке
    все изменения откатываются, временный Wallet отбрасывается.
 
 CAS атомарен в PostgreSQL: если два списания прочитали одну версию, только одно изменит
@@ -331,9 +350,10 @@ Fingerprint включает явное имя команды, нормализ�
 | POST | `/api/wallets/{walletId}/deposits` | Пополнение, 200 |
 | POST | `/api/wallets/{walletId}/withdrawals` | Списание, 200 |
 | POST | `/api/wallets/{walletId}/close` | Закрытие, 200 |
-| GET | `/api/wallets/{walletId}` | Текущее состояние через полный replay |
+| GET | `/api/wallets/{walletId}` | Текущее состояние из wallet_read_model |
 | GET | `/api/wallets/{walletId}?atVersion=2` | Состояние после факта №2 |
 | GET | `/api/wallets/{walletId}/events?afterVersion=0&limit=100` | История по версии |
+| GET | `/api/wallets/{walletId}/comparison` | eventState, readModel, matches из одного RR-снимка |
 
 Успешный ответ содержит `walletId`, `balanceMinor`, `currency`, `status`, `version`.
 История возвращает `{items, nextAfterVersion, hasMore}`. В каждом item:
@@ -349,7 +369,7 @@ Fingerprint включает явное имя команды, нормализ�
 | 400 | `INVALID_REQUEST`: JSON, UUID, заголовки, параметры, валюта, сумма или версия |
 | 404 | `WALLET_NOT_FOUND`, `VERSION_NOT_FOUND` |
 | 409 | `WALLET_ALREADY_EXISTS`, `VERSION_CONFLICT`, `IDEMPOTENCY_KEY_REUSED`, `WALLET_CLOSED`, `INSUFFICIENT_FUNDS`, `NON_ZERO_BALANCE`, `BALANCE_OVERFLOW` |
-| 500 | `CORRUPT_HISTORY`, `INTERNAL_ERROR` |
+| 500 | `CORRUPT_HISTORY`, `PROJECTION_INTEGRITY_ERROR`, `INTERNAL_ERROR` |
 
 Для стандартных ошибок маршрутизации также используются `RESOURCE_NOT_FOUND`,
 `METHOD_NOT_ALLOWED`, `NOT_ACCEPTABLE`, `UNSUPPORTED_MEDIA_TYPE`.
@@ -384,6 +404,7 @@ curl -i "$base/$wallet"
 curl -i "$base/$wallet/events?afterVersion=0&limit=2"
 curl -i "$base/$wallet/events?afterVersion=2&limit=2"
 curl -i "$base/$wallet?atVersion=2"
+curl -i "$base/$wallet/comparison"
 
 # Повтор пополнения после списания: исходные 100000 и версия 2, без нового события
 curl -i -X POST "$base/$wallet/deposits" -H 'Content-Type: application/json' \
@@ -425,30 +446,16 @@ FROM command_receipts
 WHERE command_id = '22222222-2222-4222-8222-222222222222'::uuid;
 ```
 
-## Границы первой версии и фактическая проверка
+## Границы этапа и фактическая проверка
 
-Полный replay стоит O(N) по числу событий кошелька; исторический GET также загружает
-полный поток и восстанавливает нужный префикс. Это осознанное учебное ограничение.
-Нет snapshots, проекций, очередей, кэша, переводов, авторизации или upcasters.
-Разрешён и добавлен отдельный Angular UI для ручного изучения существующего API.
-Миграции форматов событий и оптимизация replay оставлены будущим этапам.
+Полный replay команд, исторического GET и сравнения стоит O(N) по числу событий кошелька.
+Текущий GET читает одну строку проекции. Одна БД и одно приложение; после commit нет отдельного
+периода отставания проекции. Нет асинхронных обработчиков, Kafka, outbox, snapshots, кэша,
+переводов и авторизации. Eventual consistency оставлена будущему этапу.
 
-На этапе первоначальной реализации были выполнены компиляция и сборка `./gradlew bootJar` на JDK 25.0.3;
-обычный запуск собранного JAR с PostgreSQL 17.11, три успешных changeset Liquibase
-и успешный запуск Tomcat. После этого приложение и контейнер остановлены, volume сохранён.
-Текущий запуск использует единственный `compose.yaml`, host network и постоянный порт
-PostgreSQL 28742; настройки приложения и Angular proxy согласованы с портами выше.
-Дополнительный Compose-файл больше не требуется. Volume и применённые миграции сохранены.
-
-Тесты по запросу пользователя отсутствуют. HTTP-сценарии, приведённые curl/SQL,
-задачи `test`, `check` и полный `build` не выполнялись. Сборка и старт с миграциями
-не подтверждают поведение API, гонок, идемпотентности и replay; автоматическая
-проверка поведения остаётся за рамками этой работы.
-
-
-При текущем рефакторинге выполнена сборка `./gradlew bootJar`, просмотр импортов,
-локальных ссылок, транзакционных связей и неизменности миграций. Ошибок инвариантов
-Event Sourcing при чтении кода не обнаружено; бизнес-поведение не изменялось.
-Запуск приложения и обращение к БД в рамках рефакторинга не выполнялись.
-Тесты по запросу пользователя не создавались и не запускались. Конкурентное поведение
-и HTTP-контракт проверялись только чтением кода, без выполнения сценариев.
+Выполнены backend bootJar на Java 25.0.3 и frontend production build на Node 24.19.0.
+Зависимости не обновлялись. Проверены исходники, транзакционные связи и локальные ссылки.
+Приложение и миграции против БД в рамках этой задачи не запускались.
+Исторический SQL не изменён; volumes и данные не удалялись.
+Новые тесты не создавались, тесты, HTTP/браузерные сценарии, Gradle test/check/build не запускались.
+Сборка не доказывает корректность конкурентного поведения.

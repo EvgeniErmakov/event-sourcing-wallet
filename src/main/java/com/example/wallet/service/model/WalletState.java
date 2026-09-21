@@ -3,7 +3,7 @@ package com.example.wallet.service.model;
 import com.example.wallet.domain.Wallet;
 import java.util.UUID;
 
-/** Неизменяемый результат replay/команды; это ответ, а не отдельная модель хранения баланса. */
+/** Общий результат команды/replay/чтения проекции; не является самостоятельно сохраняемой сущностью. */
 public record WalletState(
         UUID walletId,
         long balanceMinor,

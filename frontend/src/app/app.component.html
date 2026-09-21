@@ -21,8 +21,8 @@
             <app-wallet-selector [selected]="selected()" [recent]="recent()" [createDisabled]="createDisabled()"
                 (create)="create()" (open)="open($event)" />
             <div class="learning-note"><span class="note-symbol" aria-hidden="true">≡</span>
-                <div><h3>Баланс — результат истории</h3><p>Сервер читает события по порядку и восстанавливает кошелёк.
-                    Отдельной таблицы текущих балансов нет.</p></div>
+                <div><h3>События — источник истины</h3><p>Команды восстанавливают кошелёк из событий.
+                    Карточка читает синхронно обновляемую проекцию.</p></div>
             </div>
         </aside>
         <div class="main-column">
@@ -34,6 +34,7 @@
                     [needsRefresh]="needsRefresh()" (money)="performMoney($event)" (close)="close()" (refresh)="refresh()" />
                 <app-historical-state [walletId]="selected()" />
             </div>
+            <app-model-comparison [walletId]="selected()" [context]="comparisonContext()" [busy]="busy()" />
             <app-event-history [selected]="selected()" [events]="events()" [loading]="historyLoading()"
                 [loaded]="historyLoaded()" [hasMore]="historyHasMore()" [error]="historyError()" [busy]="busy()"
                 (more)="loadHistory()" (retry)="loadHistory()" />

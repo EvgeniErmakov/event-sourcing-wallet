@@ -16,7 +16,7 @@ public interface EventStore {
 
     /**
      * Добавляет один НОВЫЙ факт по expectedVersion внутри транзакции вызывающего сервиса.
-     * При 0 создаёт поток; CAS, событие и будущий receipt должны откатиться вместе.
+     * При 0 создаёт поток; CAS, событие, будущие проекция и receipt должны откатиться вместе.
      * Никогда не вызывается при replay. При гонке выбрасывает VERSION_CONFLICT или WALLET_ALREADY_EXISTS.
      */
     void append(UUID walletId, long expectedVersion, WalletEvent event, UUID eventId,
@@ -24,6 +24,9 @@ public interface EventStore {
 
     /** Проверяет наличие истории, не обращаясь к receipt или отдельному балансу. */
     boolean exists(UUID walletId);
+
+    /** Проверяет именно поток, включая повреждённый пустой: отсутствие проекции не маскируется под 404. */
+    boolean streamExists(UUID walletId);
 
     /** Читает не более limit фактов после версии; сервис запрашивает limit+1 для hasMore. */
     List<StoredEvent> readPage(UUID walletId, long afterVersion, int limit);

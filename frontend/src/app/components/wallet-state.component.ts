@@ -21,7 +21,7 @@ import { formatMoney } from '../shared/numbers';
                 @if (copyMessage()) { <p class="hint" role="status">{{ copyMessage() }}</p> }
             }
             @if (loading() || (busy() && selected() && !wallet() && !error())) {
-                <div class="state-placeholder" role="status"><span class="loading-dot"></span> Восстанавливаем состояние на сервере…</div>
+                <div class="state-placeholder" role="status"><span class="loading-dot"></span> Читаем модель состояния…</div>
             } @else if (error()) {
                 <div class="notice error" role="alert">{{ error() }}</div>
             } @else if (wallet(); as state) {
@@ -34,7 +34,7 @@ import { formatMoney } from '../shared/numbers';
                     <span>Валюта <strong>{{ state.currency }}</strong></span>
                     <span>Версия <strong class="version-number">{{ state.version }}</strong></span>
                 </div>
-                <p class="state-note">Состояние восстановлено из событий · GET /api/wallets/…</p>
+                <p class="state-note">Из таблицы чтения · GET /api/wallets/… · версия последнего события</p>
             } @else {
                 <div class="state-placeholder"><span class="empty-symbol" aria-hidden="true">↗</span>
                     <h3>Начните с кошелька</h3><p>Создайте новый или откройте существующий по UUID.</p>

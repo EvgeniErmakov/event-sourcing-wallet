@@ -4,16 +4,16 @@
 
 Все изменения схемы выполняются строго через Liquibase. Не добавлять Flyway, Hibernate ddl-auto, schema.sql/data.sql или создание таблиц из Java-кода. Обычные INSERT событий и технические UPDATE версии потока во время работы выполняются через JDBC; они не являются миграциями.
 
-Для новых миграций XML используется как индекс подключений, изменения — Liquibase formatted SQL. Базовый путь: `src/main/resources/liquibase`. Главный `master.xml` включает `changelog/YYYY.MM/YYYY.MM-changelog.xml`, месячный файл включает SQL-файлы `YYYY.MM.DD_ES-N_description.sql`. ES-N — уникальный локальный номер; Jira, чужие префиксы задач и чужой author не требуются.
+Для новых миграций XML используется как индекс подключений, изменения — Liquibase formatted SQL. Базовый путь новых файлов: `src/main/resources/liquibase`. Существующий YAML master подключает `liquibase/changelog/YYYY.MM/YYYY.MM-changelog.xml`, месячный файл включает SQL-файлы `YYYY.MM.DD_ES-N_description.sql`. Отдельный новый master не вводится. ES-N — уникальный локальный номер; Jira, чужие префиксы задач и чужой author не требуются.
 
 Каждый SQL-файл начинается с `--liquibase formatted sql`, содержит уникальный `--changeset author:id`, осмысленный русский `--comment`, SQL и явную стратегию rollback. Не использовать чужой логин автора; выбрать устойчивый идентификатор проекта или реального автора.
 
-Основной путь для нового проекта:
+В этой ветке сохранён исторический YAML master; его настройка:
 
 ```yaml
 spring:
   liquibase:
-    change-log: classpath:liquibase/master.xml
+    change-log: classpath:db/changelog/db.changelog-master.yaml
   sql:
     init:
       mode: never
@@ -34,6 +34,7 @@ spring:
 | wallet_events | Неизменяемые бизнес-факты | INSERT, SELECT |
 | event_streams | UUID и техническая current_version | INSERT, SELECT, атомарный UPDATE версии |
 | command_receipts | Результат успешной команды для идемпотентности | INSERT, SELECT |
+| wallet_read_model | Синхронная производная модель | INSERT, SELECT, UPDATE |
 
 Баланс и статус кошелька не сохраняются как отдельный источник истины. Receipt может содержать исходный ответ с балансом, но GET и обработка новых команд не восстанавливают Wallet из receipt.
 
@@ -41,13 +42,13 @@ spring:
 
 ## JDBC и SQL
 
-Использовать JdbcClient/JdbcTemplate и параметризованные запросы. Явный SQL — штатная часть проекта; JPA-правила о nativeQuery, JPQL, Criteria и Specification здесь неприменимы. Spring Data/JPA автоматически не подключать. DTO projection в JPA и событийная проекция — разные понятия; ни одна не требуется первой версии.
+Использовать JdbcClient/JdbcTemplate и параметризованные запросы. Явный SQL — штатная часть проекта; JPA-правила о nativeQuery, JPQL, Criteria и Specification здесь неприменимы. Spring Data/JPA автоматически не подключать. Событийная проекция реализована явно через WalletReadModelProjector и JDBC, без ORM.
 
 Контракт CommandReceiptRepository: `Optional<CommandReceipt> find(UUID commandId)` и `void insert(CommandReceipt receipt)`. INSERT при дубликате должен обнаружить конфликт; не использовать upsert, перезаписывающий первоначальный fingerprint/ответ.
 
 ## Атомарная запись
 
-Граница транзакции находится в реализации прикладного сервиса. События команды, изменение current_version и receipt фиксируются одним commit на одном DataSource/transaction manager.
+Граница транзакции находится в реализации прикладного сервиса. События команды, изменение current_version, проекция и receipt фиксируются одним commit на одном DataSource/transaction manager.
 
 Для существующего потока проверка ожидаемой версии выполняется атомарно:
 
@@ -76,3 +77,28 @@ Fingerprint учитывает тип команды, walletId и нормали
 Деньги — BIGINT/long в копейках, без double/float, с защитой от переполнения. Моменты событий — Instant/TIMESTAMPTZ. Настройки времени Hibernate и клиники не переносить. JSONB отображать явным сериализатором, типы событий выбирать из разрешённого реестра; не десериализовать произвольные Java-классы по данным БД.
 
 Индексы вводить под конкретные запросы. UNIQUE(stream_id, stream_version) уже обеспечивает индекс для чтения истории кошелька. Не создавать дублирующий индекс без причины. Профилирование и EXPLAIN ANALYZE не являются обязательной задачей текущего рефакторинга; автоматические проверки поведения пользователь отложил.
+
+## Схема шага 2 при запуске на чистой БД
+
+YAML `db/changelog/db.changelog-master.yaml` по-прежнему первым подключает `001-wallet.sql`
+с прежним относительным путём. Его три changeset и контрольные суммы не изменяются.
+Второе подключение ведёт к `liquibase/changelog/2026.09/2026.09-changelog.xml`, затем к
+`2026.09.21_ES-1_wallet_read_model.sql`, changeset `wallet:ES-1-wallet-read-model`.
+
+Новая таблица: wallet_id UUID PK/FK на поток, balance_minor BIGINT >= 0, currency RUB,
+status ACTIVE/CLOSED, last_event_version BIGINT > 0; поля обязательны, CLOSED требует нулевой баланс.
+BIGINT-сложение в PostgreSQL отвергает переполнение. UPDATE выполняется по предыдущей версии,
+неожиданное число изменённых строк и нарушения ограничений становятся ProjectionIntegrityException.
+Это проверка целостности принятых фактов; достаточность средств для команды решает только Wallet.
+Upsert не применяется. Миграция создаёт таблицу, но не делает собственный SQL-replay JSON.
+
+На чистой БД обычный запуск последовательно применяет три changeset из 001-wallet.sql
+и ES-1: появляются event_streams, wallet_events, command_receipts и wallet_read_model.
+Liquibase сам создаёт свои служебные таблицы. Дополнительный профиль запуска не нужен.
+При создании первого кошелька проектор вставляет его строку, последующие команды обновляют её.
+Перенос существующей истории и отдельный CLI для заполнения проекции исключены из этого этапа.
+
+Rollback нового changeset — DROP TABLE wallet_read_model: удаляется производная таблица,
+но текущая версия приложения после такого rollback работать не сможет. Автоматически rollback
+не выполняется. Пересоздание учебной БД пользователь выполняет самостоятельно; приложение
+не очищает БД, таблицы или volumes при старте.

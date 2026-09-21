@@ -6,6 +6,7 @@ import {
 import { EventHistoryComponent } from './components/event-history.component';
 import { HistoricalStateComponent } from './components/historical-state.component';
 import { LastOperationComponent } from './components/last-operation.component';
+import { ModelComparisonComponent } from './components/model-comparison.component';
 import { WalletOperationsComponent } from './components/wallet-operations.component';
 import { WalletSelectorComponent } from './components/wallet-selector.component';
 import { WalletStateComponent } from './components/wallet-state.component';
@@ -18,7 +19,7 @@ const RECENT_KEY = 'wallet-ui.recent.v1';
     selector: 'app-root',
     standalone: true,
     imports: [WalletSelectorComponent, WalletStateComponent, WalletOperationsComponent, EventHistoryComponent,
-        HistoricalStateComponent, LastOperationComponent],
+        HistoricalStateComponent, LastOperationComponent, ModelComparisonComponent],
     templateUrl: './app.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -30,6 +31,7 @@ export class AppComponent {
     private historyCursor = 0;
 
     readonly selected = signal<string | null>(null);
+    readonly comparisonContext = signal(0);
     readonly wallet = signal<WalletState | null>(null);
     readonly stateLoading = signal(false);
     readonly stateError = signal('');
@@ -108,6 +110,7 @@ export class AppComponent {
 
     async refresh(): Promise<void> {
         if (!this.selected()) return;
+        this.comparisonContext.update(value => value + 1);
         await Promise.all([this.loadState(), this.loadHistory(true)]);
     }
 
@@ -142,6 +145,7 @@ export class AppComponent {
     }
 
     private select(id: string): void {
+        this.comparisonContext.update(value => value + 1);
         // Одного UUID недостаточно: пользователь может успеть выбрать A → B → A до ответа первого GET.
         ++this.selectionGeneration;
         ++this.stateGeneration;

@@ -12,8 +12,8 @@
 | Пакет | lowercase |
 | HTTP DTO | CreateWalletRequestDto, WalletResponseDto |
 | Контроллер | WalletController, в controller |
-| Прикладной сервис | WalletService, в service |
-| Реализация сервиса | WalletServiceImpl, в service.impl |
+| Прикладной сервис | WalletCommandService, в service |
+| Реализация сервиса | WalletCommandServiceImpl, в service.impl |
 | Репозиторий | CommandReceiptRepository, реализация JdbcCommandReceiptRepository |
 | Хранилище событий | EventStore, реализация JdbcEventStore |
 | Исключение | Содержательное имя с Exception, в exception и его подпакетах |
@@ -65,3 +65,12 @@ private Optional<CommandReceipt> findReceipt(UUID commandId) {
 Документировать каждый значимый тип и метод: ответственность, входные условия, результат, ошибки и побочные эффекты. Особое внимание decide/apply/rehydrate, append, идемпотентности и границам транзакции. @Override не освобождает от пояснения нетривиальной реализации; общий контракт можно описать на интерфейсе и сослаться через inheritDoc.
 
 Комментарии объясняют причины, а не очевидные присваивания. Документация события описывает его исторический смысл, единицы измерения и payload. Не менять сохранённые event_type под новое Java-имя ради стиля.
+
+## Типы CQRS
+
+WalletCommandService/WalletCommandServiceImpl и WalletQueryService/WalletQueryServiceImpl
+разделяют сценарии записи и чтения.
+WalletReadModelProjector — небольшой компонент применения фактов, без искусственной пары Impl.
+WalletReadModel — отдельный record; Wallet остаётся чистым доменным объектом.
+WalletComparison хранит Optional отсутствующей проекции; только HTTP DTO отображает её как null.
+JavaDoc проектора объясняет проверку версии, общую транзакцию и отличие факта от команды.

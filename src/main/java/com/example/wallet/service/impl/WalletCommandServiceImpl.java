@@ -1,9 +1,6 @@
 package com.example.wallet.service.impl;
 
 import static com.example.wallet.exception.domain.WalletException.Code.IDEMPOTENCY_KEY_REUSED;
-import static com.example.wallet.exception.domain.WalletException.Code.INVALID_REQUEST;
-import static com.example.wallet.exception.domain.WalletException.Code.VERSION_NOT_FOUND;
-import static com.example.wallet.exception.domain.WalletException.Code.WALLET_NOT_FOUND;
 
 import com.example.wallet.domain.Wallet;
 import com.example.wallet.domain.command.WalletCommand;
@@ -12,9 +9,9 @@ import com.example.wallet.exception.domain.WalletException;
 import com.example.wallet.repository.CommandReceiptRepository;
 import com.example.wallet.repository.EventStore;
 import com.example.wallet.service.CommandFingerprint;
-import com.example.wallet.service.WalletService;
+import com.example.wallet.service.WalletCommandService;
+import com.example.wallet.service.WalletReadModelProjector;
 import com.example.wallet.service.model.CommandReceipt;
-import com.example.wallet.service.model.EventPage;
 import com.example.wallet.service.model.StoredEvent;
 import com.example.wallet.service.model.WalletState;
 import java.time.Clock;
@@ -31,31 +28,33 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Сценарии кошелька и явная граница атомарности. Не содержит SQL или сериализации.
- * Все изменения команды фиксируются до возврата результата; ошибки не кэшируются.
+ * Командная модель: replay, бизнес-решение и явная граница атомарности. Не содержит SQL или сериализации.
+ * Событие, версия, синхронная проекция и receipt фиксируются до возврата результата; ошибки не кэшируются.
  * REQUIRES_NEW исключает возврат успеха до commit даже при вызове из внешней транзакции.
  */
 @Service
-public class WalletServiceImpl implements WalletService {
-    private static final Logger log = LoggerFactory.getLogger(WalletServiceImpl.class);
+public class WalletCommandServiceImpl implements WalletCommandService {
+    private static final Logger log = LoggerFactory.getLogger(WalletCommandServiceImpl.class);
 
     private final EventStore events;
     private final CommandReceiptRepository receipts;
     private final Clock clock;
+    private final WalletReadModelProjector projector;
     private final TransactionTemplate write;
     private final TransactionTemplate read;
 
-    public WalletServiceImpl(EventStore events, CommandReceiptRepository receipts,
-            Clock clock, PlatformTransactionManager manager) {
+    public WalletCommandServiceImpl(EventStore events, CommandReceiptRepository receipts,
+            Clock clock, PlatformTransactionManager manager, WalletReadModelProjector projector) {
         this.events = events;
         this.receipts = receipts;
         this.clock = clock;
+        this.projector = projector;
         this.write = transaction(manager, false);
         this.read = transaction(manager, true);
     }
 
     /**
-     * Сначала ищет прежний ответ, затем выполняет load → replay → decide → apply → append → receipt.
+     * Сначала ищет прежний ответ, затем выполняет load → replay → decide → apply → append → projector → receipt.
      * execute возвращает управление только после commit. При отказе версии/состояния и
      * адресной коллизии ключа execute сначала делает rollback; лишь затем читается receipt
      * в отдельной транзакции. Дубль, уже завершённый конкурентом, получает прежний ответ.
@@ -88,48 +87,6 @@ public class WalletServiceImpl implements WalletService {
         }
     }
 
-    /** GET восстанавливает полный поток или его префикс; receipt никогда не читается. */
-    @Override
-    public WalletState get(UUID walletId, Long atVersion) {
-        log.debug("Чтение состояния: walletId={}, atVersion={}", walletId, atVersion);
-        if (atVersion != null && atVersion < 1) {
-            throw new WalletException(INVALID_REQUEST, "Некорректная версия");
-        }
-        return inRead(() -> {
-            List<StoredEvent> history = events.load(walletId);
-            if (history.isEmpty()) {
-                throw new WalletException(WALLET_NOT_FOUND, "Кошелёк не найден");
-            }
-            if (atVersion != null && atVersion > history.getLast().streamVersion()) {
-                throw new WalletException(VERSION_NOT_FOUND, "Историческая версия не найдена");
-            }
-            List<StoredEvent> prefix = atVersion == null ? history : history.stream()
-                    .takeWhile(e -> e.streamVersion() <= atVersion).toList();
-            return WalletState.from(restore(walletId, prefix));
-        });
-    }
-
-    /** Курсорная история читает limit+1 строк; ограничение страницы не ограничивает replay. */
-    @Override
-    public EventPage history(UUID walletId, long afterVersion, int limit) {
-        log.debug("Чтение истории: walletId={}, afterVersion={}, limit={}", walletId, afterVersion, limit);
-        if (afterVersion < 0 || limit < 1 || limit > 500) {
-            throw new WalletException(INVALID_REQUEST, "Некорректная пагинация");
-        }
-        return inRead(() -> {
-            if (!events.exists(walletId)) {
-                throw new WalletException(WALLET_NOT_FOUND, "Кошелёк не найден");
-            }
-            List<StoredEvent> found = events.readPage(walletId, afterVersion, limit + 1);
-            boolean hasMore = found.size() > limit;
-            List<StoredEvent> items = hasMore ? found.subList(0, limit) : found;
-            long nextAfterVersion = items.isEmpty() ? afterVersion : items.getLast().streamVersion();
-            log.debug("Страница истории прочитана: walletId={}, count={}, nextAfterVersion={}, hasMore={}",
-                    walletId, items.size(), nextAfterVersion, hasMore);
-            return new EventPage(items, nextAfterVersion, hasMore);
-        });
-    }
-
     /**
      * Выполняется внутри единственного write.execute, не открывает собственных транзакций.
      * Локальный Wallet после ошибки отбрасывается вместе с откатываемыми записями.
@@ -147,11 +104,13 @@ public class WalletServiceImpl implements WalletService {
         log.debug("Новый факт подготовлен: commandId={}, walletId={}, eventId={}, eventType={}, resultingVersion={}",
                 commandId, walletId, eventId, event.getClass().getSimpleName(), wallet.version());
         events.append(walletId, expectedVersion, event, eventId, commandId, occurredAt);
+        // Проектор использует ту же транзакцию: его ошибка откатывает append и receipt.
+        projector.apply(walletId, expectedVersion + 1, event);
         CommandReceipt receipt = new CommandReceipt(commandId, fingerprint,
                 command instanceof WalletCommand.CreateWallet ? 201 : 200,
                 WalletState.from(wallet), clock.instant());
         receipts.insert(receipt);
-        log.debug("Событие и receipt вставлены; ожидается commit: commandId={}, walletId={}", commandId, walletId);
+        log.debug("Событие, проекция и receipt записаны; ожидается commit: commandId={}, walletId={}", commandId, walletId);
         return receipt;
     }
 

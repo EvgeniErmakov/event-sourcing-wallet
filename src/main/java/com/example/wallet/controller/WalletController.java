@@ -5,8 +5,10 @@ import com.example.wallet.dto.request.CloseWalletRequestDto;
 import com.example.wallet.dto.request.CreateWalletRequestDto;
 import com.example.wallet.dto.request.MoneyRequestDto;
 import com.example.wallet.dto.response.EventPageResponseDto;
+import com.example.wallet.dto.response.WalletComparisonResponseDto;
 import com.example.wallet.dto.response.WalletResponseDto;
-import com.example.wallet.service.WalletService;
+import com.example.wallet.service.WalletCommandService;
+import com.example.wallet.service.WalletQueryService;
 import com.example.wallet.service.model.CommandReceipt;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -31,10 +33,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/wallets")
 public class WalletController {
-    private final WalletService service;
+    private final WalletCommandService commands;
+    private final WalletQueryService queries;
 
-    public WalletController(WalletService service) {
-        this.service = service;
+    public WalletController(WalletCommandService commands, WalletQueryService queries) {
+        this.commands = commands;
+        this.queries = queries;
     }
 
     /** Создаёт кошелёк по заданному UUID; статус и тело повтора берутся из исходного receipt. */
@@ -65,10 +69,10 @@ public class WalletController {
         return execute(walletId, commandId, new WalletCommand.CloseWallet(body.expectedVersion()));
     }
 
-    /** Отображает текущее или историческое состояние, уже восстановленное сервисом. */
+    /** Текущий GET читает проекцию, atVersion восстанавливает историческое состояние из событий. */
     @GetMapping("/{walletId}")
     public WalletResponseDto get(@PathVariable UUID walletId, @RequestParam(required = false) @Min(1) Long atVersion) {
-        return WalletResponseDto.from(service.get(walletId, atVersion));
+        return WalletResponseDto.from(queries.get(walletId, atVersion));
     }
 
     /** Отображает готовую страницу фактов с неизменными курсором и порядком событий. */
@@ -76,11 +80,17 @@ public class WalletController {
     public EventPageResponseDto history(@PathVariable UUID walletId,
             @RequestParam(defaultValue = "0") @Min(0) long afterVersion,
             @RequestParam(defaultValue = "100") @Min(1) @Max(500) int limit) {
-        return EventPageResponseDto.from(service.history(walletId, afterVersion, limit));
+        return EventPageResponseDto.from(queries.history(walletId, afterVersion, limit));
+    }
+
+    /** Диагностика двух моделей из одного снимка БД; отсутствующая проекция явно отражена в результате. */
+    @GetMapping("/{walletId}/comparison")
+    public WalletComparisonResponseDto comparison(@PathVariable UUID walletId) {
+        return WalletComparisonResponseDto.from(queries.compare(walletId));
     }
 
     private ResponseEntity<WalletResponseDto> execute(UUID walletId, UUID commandId, WalletCommand command) {
-        CommandReceipt receipt = service.execute(walletId, commandId, command);
+        CommandReceipt receipt = commands.execute(walletId, commandId, command);
         return ResponseEntity.status(receipt.responseStatus()).body(WalletResponseDto.from(receipt.responseBody()));
     }
 }
