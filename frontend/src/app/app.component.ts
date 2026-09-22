@@ -338,7 +338,7 @@ export class AppComponent implements OnDestroy, OnInit {
         this.handlerActionInFlight.set(true);
         this.handlerError.set('');
         try {
-            const updated = current.paused || current.pauseRequested
+            const updated = current.paused || current.pauseRequested || current.status === 'IDLE'
                 ? await this.api.resumeProjectionHandler() : await this.api.pauseProjectionHandler();
             if (epoch === this.handlerEpoch) this.handler.set(updated);
             await this.fetchHandlerStatus(true);

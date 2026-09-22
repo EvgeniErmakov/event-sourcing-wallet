@@ -31,12 +31,19 @@
                     Пауза действует на текущий backend; возобновление сохраняет позицию.</p>
                 <div class="card-heading"><h2 id="handler-heading">Обработчик Axon</h2>
                     <button class="secondary" type="button" [disabled]="!handler() || handlerActionInFlight()" (click)="toggleHandler()">
-                        {{ handler()?.paused || handler()?.pauseRequested ? 'Возобновить' : 'Приостановить' }}
+                        {{ handler()?.paused || handler()?.pauseRequested || handler()?.status === 'IDLE'
+                            ? 'Возобновить' : 'Приостановить' }}
                     </button>
                 </div>
                 @if (handler(); as state) {
                     <p class="handler-status"><span class="badge" [class.closed]="state.paused">{{ state.status }}</span>
-                        {{ state.status === 'PAUSE_REQUESTED' ? 'Ожидаем остановки обработчика; начатая порция может завершиться.' : state.paused ? 'Обработчик остановлен, позиция сохранена.' : 'Асинхронная обработка включена.' }}</p>
+                        @switch (state.status) {
+                            @case ('PAUSE_REQUESTED') { Ожидаем остановки обработчика; начатая порция может завершиться. }
+                            @case ('PAUSED') { Обработчик остановлен, позиция сохранена. }
+                            @case ('RUNNING') { Асинхронная обработка включена. }
+                            @default { Обработчик не запущен. }
+                        }
+                    </p>
                     @if (state.lastError) { <p class="notice error" role="alert">Ошибка обработки: {{ state.lastError }}</p> }
                 }
                 @if (handlerError()) { <p class="error-text" role="alert">{{ handlerError() }}</p> }
