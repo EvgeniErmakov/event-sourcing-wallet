@@ -4,8 +4,8 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * Точка запуска учебного приложения: включает Spring MVC, JDBC и Liquibase.
- * Сканирует адаптеры и сценарии кошелька; домен остаётся чистой Java.
+ * Точка запуска учебного приложения: включает Spring MVC, Axon, JPA/JDBC и Liquibase.
+ * Сканирует адаптеры и сценарии кошелька; Wallet использует модель event-sourced entity Axon.
  */
 @SpringBootApplication
 public class WalletApplication {

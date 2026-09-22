@@ -55,7 +55,7 @@ public class JdbcCommandReceiptRepository implements CommandReceiptRepository {
     /**
      * {@inheritDoc}
      * Адресный ON CONFLICT распознаёт только PK receipt. Нулевая вставка заставляет
-     * сервис откатить и событие, и версию потока; отдельной транзакции у метода нет.
+     * Axon откатить сохранение событий; отдельной транзакции у метода нет.
      */
     @Override
     public void insert(CommandReceipt receipt) {

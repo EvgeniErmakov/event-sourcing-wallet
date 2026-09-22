@@ -23,6 +23,10 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
     implementation 'org.springframework.boot:spring-boot-starter-liquibase'
+    implementation 'org.springframework.boot:spring-boot-hibernate'
+    implementation 'org.hibernate.orm:hibernate-core'
+    implementation 'org.springframework:spring-orm'
+    implementation 'org.axonframework.extensions.spring:axon-spring-boot-starter:5.3.2'
     runtimeOnly 'org.postgresql:postgresql'
 }
 

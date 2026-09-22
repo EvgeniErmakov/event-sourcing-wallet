@@ -1,4 +1,4 @@
-name: event-sourcing-wallet-03-cqrs-async
+name: event-sourcing-wallet-04-axon
 
 services:
   postgres:
@@ -12,7 +12,7 @@ services:
       POSTGRES_USER: ${DB_USERNAME:-wallet}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-wallet}
     volumes:
-      - wallet_async_postgres_data:/var/lib/postgresql/data
+      - wallet_axon_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
@@ -21,4 +21,4 @@ services:
       start_period: 10s
 
 volumes:
-  wallet_async_postgres_data:
+  wallet_axon_postgres_data:

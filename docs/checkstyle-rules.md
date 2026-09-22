@@ -50,6 +50,6 @@
 ## Асинхронный CQRS
 
 Те же правила применяются к командному/query-сервисам и обработчику. Командную транзакцию
-не смешивать с транзакцией AsyncProjectionHandler. Для каждого кошелька сохранять отдельную
-границу TransactionTemplate, lock позиции и атомарное обновление позиции вместе с read model.
-Не менять SQL CAS, fingerprint и REPEATABLE READ comparison ради стиля.
+не смешивать с транзакцией streaming processor Axon. Сохранять общую транзакцию
+read model и JDBC token для порции одного segment.
+Не менять fingerprint, expectedVersion и сравнение на общей бизнес-версии ради стиля.

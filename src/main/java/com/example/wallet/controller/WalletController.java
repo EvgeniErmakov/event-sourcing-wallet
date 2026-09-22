@@ -83,7 +83,7 @@ public class WalletController {
         return EventPageResponseDto.from(queries.history(walletId, afterVersion, limit));
     }
 
-    /** Диагностика двух моделей из одного снимка БД; отсутствующая проекция явно отражена в результате. */
+    /** Диагностика по общему префиксу истории на бизнес-версии проекции; отсутствующая проекция явно отражена в результате. */
     @GetMapping("/{walletId}/comparison")
     public WalletComparisonResponseDto comparison(@PathVariable UUID walletId) {
         return WalletComparisonResponseDto.from(queries.compare(walletId));

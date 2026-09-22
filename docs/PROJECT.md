@@ -1,37 +1,25 @@
-# Спецификация `03-cqrs-async`
+# Спецификация 04-axon
 
-Текущий этап — Event Sourcing + CQRS с асинхронной проекцией и eventual consistency.
-Сохраняются бизнес-операции кошелька, CAS, fingerprint, receipts и прежний REST-контракт.
+Сохранены создание, пополнение, списание и закрытие кошелька, RUB, целые копейки,
+положительные суммы, защита overflow и отрицательного баланса, expectedVersion,
+закрытие только нулевого кошелька и запрет операций после закрытия.
 
-| | `02-cqrs-sync` | `03-cqrs-async` |
+Источник истины — Axon aggregate-based JPA Event Store 5.3.2. Domain Wallet не является JPA Entity.
+Команды доставляются CommandGateway, сущность восстанавливается Axon, события применяет source.
+Постоянная идемпотентность реализована fingerprint и JDBC command_receipts приложения.
+Асинхронная проекция использует PooledStreamingEventProcessor и JdbcTokenStore.
+
+| Этап | Хранение и доставка | Транзакции |
 |---|---|---|
-| Командная транзакция | событие + версия + проекция + receipt | событие + версия + receipt |
-| Проекция | готова после commit команды | отдельный polling commit позже |
-| Ошибка проекции | откатывает команду | откатывает порцию обработчика |
-| Обычный GET | read model | read model, возможно старая |
-| Курсор | не нужен | `projection_positions` на кошелёк |
+| 02 (исторический контекст) | собственный Event Store | событие + receipt + проекция |
+| 03 (исторический контекст) | собственный CAS и polling по кошелькам | событие + receipt; отдельно проекция + позиция |
+| 04 | Axon JPA Event Store и streaming processor | событие + JDBC receipt; отдельно JDBC проекция + token |
 
-Одна БД достаточна для CQRS: разделены модели и пути, а не обязательно физические базы.
-После возобновления обработчика и устранения ошибок система сходится. При паузе или повреждённом
-событии отставание может сохраняться.
+В этапе 04 один segment; ошибка может задержать все кошельки. CQRS не требует отдельной БД,
+Axon не отменяет бизнес-инварианты и идемпотентность API. Eventual consistency требует
+продолжения обработки; при паузе/ошибке отставание сохраняется.
 
-## Сервисы
-
-- `WalletCommandServiceImpl` — replay, decide/apply, CAS append и receipt.
-- `WalletQueryServiceImpl` — read model, исторический replay, история и comparison.
-- `AsyncProjectionHandler` — расписание, отдельная транзакция кошелька, lock позиции и retry.
-- `WalletReadModelProjector` — применение событий с проверкой предыдущей версии.
-
-Команда проверяет, что `Wallet.decide` вернул ровно одно событие. Receipt не является read model
-и повтор успешной команды не запускает проектор.
-
-## API и ограничения
-
-Новые технические endpoints: `GET /api/projection-handler`,
-`POST /api/projection-handler/pause`, `POST /api/projection-handler/resume`.
-`GET /api/wallets/{id}` возвращает `PROJECTION_NOT_READY` (409), если поток уже есть, но
-первая проекция ещё не создана. Comparison возвращает write-side state, read model/null,
-streamVersion, projectionVersion, pendingEvents, status (`MATCHED`/`LAGGING`) и matches.
-
-Нет брокера, отдельной БД, глобального курсора, snapshots, outbox, online rebuild, backfill и
-переноса данных прошлых веток. Начальная схема рассчитана на чистую БД. Пауза не кластерная.
+REST и UI сохраняют операции, историю, atVersion, comparison и повтор ключа.
+Comparison использует общий исторический префикс по бизнес-версии, а не общий DB snapshot.
+Ограничения: нет Axon Server, коммерческих модулей, DCB, snapshots, Saga, авторизации,
+миграции старой истории и административной пересборки. Детали: [axon.md](axon.md).

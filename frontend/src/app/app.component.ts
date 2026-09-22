@@ -324,7 +324,7 @@ export class AppComponent implements OnDestroy, OnInit {
 
     private async pollReadSide(): Promise<void> {
         if (!this.selected()) {
-            await this.loadHandler();
+            await this.loadHandler(false);
             return;
         }
         this.comparisonPollingContext.update(value => value + 1);

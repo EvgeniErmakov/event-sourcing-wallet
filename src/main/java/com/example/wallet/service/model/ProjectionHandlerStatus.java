@@ -1,6 +1,10 @@
 package com.example.wallet.service.model;
 
-/** Текущее состояние учебного обработчика проекции одного экземпляра приложения. */
+/**
+ * Состояние processor текущего экземпляра. processing означает включённый processor
+ * либо ещё не завершённый shutdown, а не точное число выполняющихся JDBC-запросов.
+ * Подтверждённая пауза определяется paused; запрос остановки — pauseRequested.
+ */
 public record ProjectionHandlerStatus(String status, boolean paused, boolean pauseRequested, boolean processing,
         String lastError) {
 }

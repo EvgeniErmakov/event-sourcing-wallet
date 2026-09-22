@@ -1,158 +1,61 @@
 package com.example.wallet.service.impl;
 
-import static com.example.wallet.exception.domain.WalletException.Code.IDEMPOTENCY_KEY_REUSED;
-
-import com.example.wallet.domain.Wallet;
+import com.example.wallet.domain.command.DispatchWalletCommand;
 import com.example.wallet.domain.command.WalletCommand;
-import com.example.wallet.domain.event.WalletEvent;
 import com.example.wallet.exception.domain.WalletException;
 import com.example.wallet.repository.CommandReceiptRepository;
-import com.example.wallet.repository.EventStore;
-import com.example.wallet.repository.ProjectionPositionRepository;
 import com.example.wallet.service.CommandFingerprint;
 import com.example.wallet.service.WalletCommandService;
 import com.example.wallet.service.model.CommandReceipt;
-import com.example.wallet.service.model.StoredEvent;
-import com.example.wallet.service.model.WalletState;
-import java.time.Clock;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
 import java.util.UUID;
-import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.axonframework.messaging.commandhandling.gateway.CommandGateway;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/**
- * Командная модель: replay, бизнес-решение и явная граница атомарности. Не содержит SQL или сериализации.
- * Событие, версия и receipt фиксируются до возврата результата; асинхронная проекция в эту транзакцию не входит.
- * REQUIRES_NEW исключает возврат успеха до commit даже при вызове из внешней транзакции.
- */
+/** HTTP-адаптер command gateway. Транзакция начинается внутри Axon, а не вокруг отправки команды. */
 @Service
 public class WalletCommandServiceImpl implements WalletCommandService {
-    private static final Logger log = LoggerFactory.getLogger(WalletCommandServiceImpl.class);
-
-    private final EventStore events;
+    private final CommandGateway gateway;
     private final CommandReceiptRepository receipts;
-    private final Clock clock;
-    private final ProjectionPositionRepository positions;
-    private final TransactionTemplate write;
     private final TransactionTemplate read;
 
-    public WalletCommandServiceImpl(EventStore events, CommandReceiptRepository receipts,
-            Clock clock, PlatformTransactionManager manager, ProjectionPositionRepository positions) {
-        this.events = events;
+    public WalletCommandServiceImpl(CommandGateway gateway, CommandReceiptRepository receipts,
+            PlatformTransactionManager manager) {
+        this.gateway = gateway;
         this.receipts = receipts;
-        this.clock = clock;
-        this.positions = positions;
-        this.write = transaction(manager, false);
-        this.read = transaction(manager, true);
+        read = new TransactionTemplate(manager);
+        read.setReadOnly(true);
+        read.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
-    /**
-     * Сначала ищет прежний ответ, затем выполняет load → replay → decide → apply → append → receipt.
-     * execute возвращает управление только после commit. При отказе версии/состояния и
-     * адресной коллизии ключа execute сначала делает rollback; лишь затем читается receipt
-     * в отдельной транзакции. Дубль, уже завершённый конкурентом, получает прежний ответ.
-     * Никакого повторного decide/списания с обновлённой версией нет.
-     */
+    /** Gateway завершается после UnitOfWork commit, включая JPA flush. Денежных retry здесь нет. */
     @Override
     public CommandReceipt execute(UUID walletId, UUID commandId, WalletCommand command) {
-        log.debug("Обработка команды: commandId={}, walletId={}, commandType={}, expectedVersion={}",
-                commandId, walletId, command.getClass().getSimpleName(), command.expectedVersion());
         String fingerprint = CommandFingerprint.of(walletId, command);
-        Optional<CommandReceipt> previous = findReceipt(commandId);
-        if (previous.isPresent()) {
-            return matching(previous.get(), fingerprint);
-        }
+        var previous = read.execute(status -> receipts.find(commandId));
+        if (previous.isPresent()) return matching(previous.get(), fingerprint);
         try {
-            CommandReceipt completed = Objects.requireNonNull(write.execute(ignored ->
-                    executeInTransaction(walletId, commandId, command, fingerprint)));
-            // execute уже выполнил commit: до этой точки нельзя сообщать об успехе команды.
-            log.info("Команда завершена: commandId={}, walletId={}, commandType={}, version={}",
-                    commandId, walletId, command.getClass().getSimpleName(), completed.responseBody().version());
-            return completed;
-        } catch (WalletException failure) {
-            // Здесь транзакция записи уже завершилась rollback, её объект Wallet отброшен.
-            // Не ловим произвольные SQL-ошибки как 409: они остаются серверными ошибками.
-            log.debug("Транзакция отменена: commandId={}, walletId={}, code={}; поиск receipt после rollback",
-                    commandId, walletId, failure.code());
-            return findReceipt(commandId)
-                    .map(receipt -> matching(receipt, fingerprint))
-                    .orElseThrow(() -> failure);
+            return gateway.sendAndWait(new DispatchWalletCommand(walletId, commandId, fingerprint, command), CommandReceipt.class);
+        } catch (RuntimeException failure) {
+            // Gateway уже завершил rollback. Новый snapshot видит receipt победившего конкурента.
+            var concurrent = read.execute(status -> receipts.find(commandId));
+            if (concurrent.isPresent()) return matching(concurrent.get(), fingerprint);
+            for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+                if (cause instanceof WalletException domain) throw domain;
+                if (cause instanceof org.axonframework.eventsourcing.eventstore.AppendEventsTransactionRejectedException) {
+                    throw new WalletException(WalletException.Code.VERSION_CONFLICT, "Версия кошелька изменилась");
+                }
+            }
+            throw failure;
         }
-    }
-
-    /**
-     * Выполняется внутри единственного write.execute, не открывает собственных транзакций.
-     * Локальный Wallet после ошибки отбрасывается вместе с откатываемыми записями.
-     */
-    private CommandReceipt executeInTransaction(UUID walletId, UUID commandId,
-            WalletCommand command, String fingerprint) {
-        Wallet wallet = restore(walletId, events.load(walletId));
-        List<WalletEvent> decided = wallet.decide(command);
-        // Текущий домен обещает один факт на команду. Явная проверка не позволяет
-        // silently discard дополнительные события при изменении доменной модели.
-        if (decided.size() != 1) {
-            throw new IllegalStateException("Команда должна порождать ровно одно событие");
-        }
-        WalletEvent event = decided.getFirst();
-        long expectedVersion = wallet.version();
-        wallet.apply(event);
-        var occurredAt = clock.instant();
-        UUID eventId = UUID.randomUUID();
-        log.debug("Новый факт подготовлен: commandId={}, walletId={}, eventId={}, eventType={}, resultingVersion={}",
-                commandId, walletId, eventId, event.getClass().getSimpleName(), wallet.version());
-        events.append(walletId, expectedVersion, event, eventId, commandId, occurredAt);
-        if (expectedVersion == 0) {
-            // Позиция создаётся в той же транзакции, что поток и первое событие.
-            // При rollback не остаётся ни потока, ни курсора, ни факта.
-            positions.create(walletId);
-        }
-        CommandReceipt receipt = new CommandReceipt(commandId, fingerprint,
-                command instanceof WalletCommand.CreateWallet ? 201 : 200,
-                WalletState.from(wallet), clock.instant());
-        receipts.insert(receipt);
-        log.debug("Событие и receipt записаны; проекция будет применена обработчиком: commandId={}, walletId={}",
-                commandId, walletId);
-        return receipt;
-    }
-
-    private static TransactionTemplate transaction(PlatformTransactionManager manager, boolean readOnly) {
-        TransactionTemplate template = new TransactionTemplate(manager);
-        template.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        template.setReadOnly(readOnly);
-        return template;
-    }
-
-    private Wallet restore(UUID walletId, List<StoredEvent> history) {
-        log.debug("Replay начат: walletId={}, eventCount={}", walletId, history.size());
-        Wallet wallet = Wallet.rehydrate(walletId, history.stream().map(StoredEvent::payload).toList());
-        log.debug("Replay завершён: walletId={}, version={}", walletId, wallet.version());
-        return wallet;
-    }
-
-    /** Отсутствие receipt — обычный результат; каждый поиск получает отдельную транзакцию чтения. */
-    private Optional<CommandReceipt> findReceipt(UUID commandId) {
-        Optional<CommandReceipt> receipt = inRead(() -> receipts.find(commandId));
-        log.debug("Поиск receipt: commandId={}, found={}", commandId, receipt.isPresent());
-        return receipt;
-    }
-
-    private <T> T inRead(Supplier<T> action) {
-        return read.execute(ignored -> action.get());
     }
 
     private CommandReceipt matching(CommandReceipt receipt, String fingerprint) {
         if (!receipt.requestFingerprint().equals(fingerprint)) {
-            throw new WalletException(IDEMPOTENCY_KEY_REUSED, "Ключ уже использован для другой команды");
+            throw new WalletException(WalletException.Code.IDEMPOTENCY_KEY_REUSED, "Ключ уже использован для другой команды");
         }
-        log.debug("Возвращён сохранённый результат команды: commandId={}", receipt.commandId());
         return receipt;
     }
 }

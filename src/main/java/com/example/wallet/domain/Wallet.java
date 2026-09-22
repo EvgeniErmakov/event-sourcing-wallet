@@ -13,6 +13,19 @@ import com.example.wallet.domain.command.WalletCommand;
 import com.example.wallet.domain.event.WalletEvent;
 import com.example.wallet.exception.domain.CorruptHistoryException;
 import com.example.wallet.exception.domain.WalletException;
+import com.example.wallet.domain.command.DispatchWalletCommand;
+import com.example.wallet.domain.event.WalletFact;
+import com.example.wallet.service.model.CommandReceipt;
+import com.example.wallet.service.model.WalletState;
+import com.example.wallet.repository.CommandReceiptRepository;
+import com.example.wallet.serialization.EventSerializer;
+import org.axonframework.extension.spring.stereotype.EventSourced;
+import org.axonframework.eventsourcing.annotation.reflection.EntityCreator;
+import org.axonframework.eventsourcing.annotation.reflection.InjectEntityId;
+import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
+import org.axonframework.messaging.eventhandling.gateway.EventAppender;
+import org.axonframework.eventsourcing.annotation.EventSourcingHandler;
+import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -22,6 +35,7 @@ import java.util.UUID;
  * До первого WalletCreated версия равна 0 и кошелёк не существует.
  * Объект используется внутри одного сценария и не разделяется между потоками.
  */
+@EventSourced(idType = UUID.class, tagKey = "Wallet")
 public final class Wallet {
     private final UUID walletId;
     private long balanceMinor;
@@ -29,7 +43,8 @@ public final class Wallet {
     private Status status;
     private long version;
 
-    private Wallet(UUID walletId) {
+    @EntityCreator
+    public Wallet(@InjectEntityId UUID walletId) {
         this.walletId = Objects.requireNonNull(walletId);
     }
 
@@ -47,7 +62,7 @@ public final class Wallet {
     /**
      * Проверяет новую команду и возвращает один новый факт, не меняя агрегат.
      * expectedVersion проверяется до бизнес-правил; окончательную защиту от гонки
-     * обеспечивает CAS в БД. Ошибки входа/состояния представлены WalletException.
+     * обеспечивает уникальная версия aggregate-based Event Store Axon. Ошибки входа/состояния представлены WalletException.
      */
     public List<WalletEvent> decide(WalletCommand command) {
         if (command instanceof WalletCommand.CreateWallet c) {
@@ -146,6 +161,47 @@ public final class Wallet {
             }
         }
         version++;
+    }
+
+    /** Axon вызывает обработчик в своей транзакции; JdbcTemplate участвует через общий JpaTransactionManager.
+     * Receipt вставляется до commit и откатывается также при поздней ошибке flush событий.
+     * Повтор проверяется до decide: старый expectedVersion не мешает вернуть первоначальный ответ.
+     */
+    @CommandHandler
+    public CommandReceipt handle(
+            DispatchWalletCommand request,
+            EventAppender appender,
+            CommandReceiptRepository receipts,
+            EventSerializer serializer, Clock clock) {
+        var previous = receipts.find(request.commandId());
+        if (previous.isPresent()) {
+            if (!previous.get().requestFingerprint().equals(request.fingerprint())) {
+                throw failure(WalletException.Code.IDEMPOTENCY_KEY_REUSED, "Ключ уже использован для другой команды");
+            }
+            return previous.get();
+        }
+        var facts = decide(request.command());
+        if (facts.size() != 1) {
+            throw new IllegalStateException("Команда должна порождать ровно один факт");
+        }
+        var encoded = serializer.encode(facts.getFirst());
+        appender.append(new WalletFact(walletId, version + 1,
+                request.commandId(), encoded.eventType(), encoded.schemaVersion(), encoded.payload()));
+        var receipt = new CommandReceipt(request.commandId(), request.fingerprint(),
+                request.command() instanceof WalletCommand.CreateWallet ? 201 : 200,
+                WalletState.from(this), clock.instant());
+        receipts.insert(receipt);
+        return receipt;
+    }
+
+    /** Replay применяет только факт, не выполняет команду, не пишет receipt и не обращается к часам. */
+    @EventSourcingHandler
+    public void source(WalletFact fact,
+            EventSerializer serializer) {
+        if (!walletId.equals(fact.walletId()) || fact.businessVersion() != version + 1) {
+            throw corrupt("Нарушен порядок бизнес-версий Axon");
+        }
+        apply(serializer.decode(fact.eventType(), fact.schemaVersion(), fact.payload()));
     }
 
     public boolean exists() {

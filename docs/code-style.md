@@ -15,7 +15,7 @@
 | Прикладной сервис | WalletCommandService, в service |
 | Реализация сервиса | WalletCommandServiceImpl, в service.impl |
 | Репозиторий | CommandReceiptRepository, реализация JdbcCommandReceiptRepository |
-| Хранилище событий | EventStore, реализация JdbcEventStore |
+| Хранилище событий | Axon EventStore, чтение через AxonWalletHistory |
 | Исключение | Содержательное имя с Exception, в exception и его подпакетах |
 
 В собственных именах писать Id, Dto, Json, Http вместо ID, DTO, JSON, HTTP. Правило не относится к именам стандартных типов UUID/URI, внешним API и константам.
@@ -42,7 +42,7 @@ Dependency injection — явный конструктор и final-поля. Lo
 
 ```java
 private Optional<CommandReceipt> findReceipt(UUID commandId) {
-    return inRead(() -> receipts.find(commandId));
+    return receipts.find(commandId);
 }
 ```
 
@@ -71,6 +71,6 @@ private Optional<CommandReceipt> findReceipt(UUID commandId) {
 WalletCommandService/WalletCommandServiceImpl и WalletQueryService/WalletQueryServiceImpl
 разделяют сценарии записи и чтения.
 WalletReadModelProjector — небольшой компонент применения фактов, без искусственной пары Impl.
-WalletReadModel — отдельный record; Wallet остаётся чистым доменным объектом.
+WalletReadModel — отдельный record; Wallet содержит аннотации Axon, но не является JPA Entity.
 WalletComparison хранит Optional отсутствующей проекции; только HTTP DTO отображает её как null.
 JavaDoc проектора объясняет проверку версии, отдельную транзакцию обработчика и отличие факта от команды.

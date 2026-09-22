@@ -8,7 +8,7 @@ import static com.example.wallet.exception.domain.WalletException.Code.WALLET_NO
 import com.example.wallet.domain.Wallet;
 import com.example.wallet.exception.domain.WalletException;
 import com.example.wallet.exception.infrastructure.ProjectionIntegrityException;
-import com.example.wallet.repository.EventStore;
+import com.example.wallet.repository.WalletHistory;
 import com.example.wallet.repository.WalletReadModelRepository;
 import com.example.wallet.service.WalletQueryService;
 import com.example.wallet.service.model.EventPage;
@@ -26,16 +26,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Обычное чтение использует производную таблицу, историческое и диагностическое — события.
- * Один read-only снимок на запрос исключает ложное расхождение моделей из-за commit конкурента.
- * Внутри callback вызываются непосредственно репозитории, без вложенных REQUIRES_NEW-сервисов.
+ * JDBC-снимок относится только к проекции. История Axon читается независимо;
+ * сравнение проверяет неизменяемый префикс событий на бизнес-версии ранее прочитанной проекции.
  */
 @Service
 public class WalletQueryServiceImpl implements WalletQueryService {
-    private final EventStore events;
+    private final WalletHistory events;
     private final WalletReadModelRepository models;
     private final TransactionTemplate read;
 
-    public WalletQueryServiceImpl(EventStore events, WalletReadModelRepository models, PlatformTransactionManager manager) {
+    public WalletQueryServiceImpl(WalletHistory events, WalletReadModelRepository models, PlatformTransactionManager manager) {
         this.events = events;
         this.models = models;
         this.read = new TransactionTemplate(manager);
@@ -85,20 +85,23 @@ public class WalletQueryServiceImpl implements WalletQueryService {
     }
 
     /**
-     * Replay и SELECT проекции видят один снимок PostgreSQL даже при параллельной команде.
+     * Общего снимка нет: сначала читается проекция, затем история, включающая её префикс.
      * Отсутствующая производная строка возвращается явно, чтобы UI мог показать причину расхождения.
      */
     @Override
     public WalletComparison compare(UUID walletId) {
         return Objects.requireNonNull(read.execute(ignored -> {
-            WalletState eventState = restore(walletId, requiredHistory(walletId));
+            // Сначала фиксируем версию проекции, затем читаем неизменяемый префикс событий Axon.
+            // Общего снимка нет: сравниваем содержимое на общей бизнес-версии.
             var readModel = models.find(walletId);
+            var history = requiredHistory(walletId);
+            WalletState eventState = restore(walletId, history);
             long projectionVersion = readModel.map(WalletReadModel::lastEventVersion).orElse(0L);
             if (projectionVersion > eventState.version()) {
                 throw new ProjectionIntegrityException("Проекция опережает поток: walletId=" + walletId);
             }
-            if (projectionVersion == eventState.version()
-                    && readModel.isPresent() && !eventState.equals(readModel.get().toState())) {
+            if (readModel.isPresent() && !restore(walletId, history.stream()
+                    .takeWhile(event -> event.streamVersion() <= projectionVersion).toList()).equals(readModel.get().toState())) {
                 throw new ProjectionIntegrityException("Состояния одной версии различаются: walletId=" + walletId);
             }
             long pending = eventState.version() - projectionVersion;

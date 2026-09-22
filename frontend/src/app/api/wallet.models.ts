@@ -62,7 +62,7 @@ export interface LastOperation {
 }
 
 export interface RecentWallet { readonly id: string; }
-/** Обе модели получены сервером независимо в одном согласованном снимке. */
+/** Модели прочитаны последовательно; проекция сверена с историей на её бизнес-версии. */
 export interface WalletComparison {
     readonly eventState: WalletState;
     readonly readModel: WalletState | null;

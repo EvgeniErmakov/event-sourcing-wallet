@@ -9,6 +9,15 @@ spring:
     url: ${DB_URL:jdbc:postgresql://127.0.0.1:28742/wallet}
     username: ${DB_USERNAME:wallet}
     password: ${DB_PASSWORD:wallet}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+    properties:
+      hibernate:
+        globally_quoted_identifiers: true
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.xml
   sql:
@@ -20,8 +29,7 @@ logging:
   level:
     com.example.wallet: ${WALLET_LOG_LEVEL:INFO}
 
-wallet:
-  projection:
-    poll-interval-ms: ${WALLET_PROJECTION_POLL_INTERVAL_MS:3000}
-    initial-delay-ms: ${WALLET_PROJECTION_INITIAL_DELAY_MS:1000}
-    batch-size: ${WALLET_PROJECTION_BATCH_SIZE:50}
+axon:
+  eventstorage:
+    jpa:
+      polling-interval: 3000

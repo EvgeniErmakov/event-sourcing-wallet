@@ -12,7 +12,7 @@
 | GET | /api/wallets/{id} | read model, возможно старая |
 | GET | /api/wallets/{id}?atVersion=N | replay исторической версии |
 | GET | /api/wallets/{id}/events | страница Event Store |
-| GET | /api/wallets/{id}/comparison | replay/read model в одном RR-снимке |
+| GET | /api/wallets/{id}/comparison | сверка проекции с историей на общей бизнес-версии |
 | GET | /api/projection-handler | статус обработчика |
 | POST | /api/projection-handler/pause | пауза текущего экземпляра |
 | POST | /api/projection-handler/resume | возобновление |

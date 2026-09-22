@@ -13,6 +13,6 @@ public interface WalletQueryService {
     /** Страница неизменяемых фактов; limit 1–500, afterVersion >= 0. Не ограничивает полный replay. */
     EventPage history(UUID walletId, long afterVersion, int limit);
 
-    /** Независимо читает события и проекцию в одной read-only REPEATABLE READ транзакции. */
+    /** Сверяет проекцию с префиксом истории той же бизнес-версии; общего снимка JPA/JDBC нет. */
     WalletComparison compare(UUID walletId);
 }

@@ -1,39 +1,28 @@
-# Учебный маршрут: `03-cqrs-async`
+# Изучение этапа 04
 
-Этап 02 фиксировал событие, проекцию и receipt одним commit. Здесь команда фиксирует только
-write side, а `AsyncProjectionHandler` догоняет события отдельной транзакцией. Это позволяет
-увидеть eventual consistency в одной БД без брокера.
+Сначала сравните [спецификацию этапов](PROJECT.md) и таблицу обязанностей в [axon.md](axon.md).
+Event Sourcing означает хранение фактов, CQRS — разные модели чтения/записи,
+eventual consistency — отдельный commit проекции. Одной PostgreSQL достаточно для всех трёх.
 
-## Что изучать
+Порядок чтения реального кода:
 
-1. `Wallet` и `WalletEvent` — правила и факты.
-2. `WalletCommandServiceImpl` — replay, CAS, fingerprint, receipt; проектор здесь отсутствует.
-3. `JdbcEventStore` — версии потока и `readAfter`.
-4. `ProjectionPositionRepository` — курсор и `FOR UPDATE`.
-5. `AsyncProjectionHandler` — пакет, rollback, retry и pause.
-6. `WalletReadModelProjector` — применение факта без бизнес-команды.
-7. `WalletQueryServiceImpl` — stale GET и comparison в REPEATABLE READ.
-8. `WalletController`, `ProjectionHandlerController`, Angular `AppComponent` и comparison.
+1. Wallet: decide/apply, Axon handle/source; replay не вызывает бизнес-команду.
+2. DispatchWalletCommand и WalletFact: UUID, ключ команды, businessVersion.
+3. WalletCommandServiceImpl: gateway, ожидание commit, receipt после rollback.
+4. AxonConfiguration: общий DataSource, JPA/JDBC transaction manager, JDBC tokens и один segment.
+5. AxonWalletProjection и WalletReadModelProjector: применение принятого факта.
+6. AxonWalletHistory и WalletQueryServiceImpl: чтение API Axon, atVersion и общий префикс comparison.
+7. AxonProjectionHandlerServiceImpl: shutdown/start реального processor без reset.
+8. Angular AppComponent: receipt отдельно от read model, версии по UUID, безопасный polling.
 
-## Ручной сценарий
+В этапах 01/02 replay и CAS были ответственностью приложения; в 03 оно также сохраняло
+позиции polling. Теперь эту инфраструктуру предоставляет Axon. Приложение всё ещё отвечает
+за деньги, idempotency fingerprint/receipt, проекции и реакцию на ошибки.
 
-1. Запустить PostgreSQL и приложение на чистой БД, создать кошелёк.
-2. Дождаться `MATCHED` и `pendingEvents=0`.
-3. Приостановить обработчик и дождаться `PAUSED`.
-4. Пополнить кошелёк: команда успешна, событие и receipt сохранены, но read model ещё старая.
-5. Повторить тот же запрос: receipt возвращается, новая версия события не появляется.
-6. Возобновить обработчик и наблюдать `LAGGING`, затем `MATCHED`.
-7. Остановить backend с накопившимися событиями, запустить снова и убедиться, что позиции
-   продолжают обработку. Онлайн rebuild и перенос старой базы не входят в этап.
+Read model производна и концептуально восстанавливается из событий, но административного
+rebuild здесь нет. После паузы или перезапуска processor продолжает с token. Атомарность token
+и проекции предотвращает повторный эффект зафиксированной порции, это не exactly-once delivery.
 
-## Запуск
-
-```bash
-docker compose up -d --wait postgres
-./gradlew bootRun
-cd frontend && npm ci && npm start
-```
-
-Polling настраивается `WALLET_PROJECTION_POLL_INTERVAL_MS` и `WALLET_PROJECTION_BATCH_SIZE`.
-Обычный GET не ждёт обработчик и не выполняет replay. Исторический просмотр и comparison
-выполняют replay явно. Новые тесты и автоматические сценарии запрещены условиями этапа.
+Команды сборки/запуска и ручной сценарий «пауза → пополнение → повтор → resume → сходимость»
+приведены в [README](../README.md). Отдельно попробуйте рестарт с накопленными событиями.
+Эти сценарии не запускались автоматически; компиляция не доказывает конкурентные гарантии.

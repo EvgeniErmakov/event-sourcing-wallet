@@ -18,7 +18,7 @@ import { formatMoney } from '../shared/numbers';
             </div>
             <p class="hint">Команды проверяют состояние из событий. Обычное чтение использует отдельную таблицу.
                 Событие и receipt фиксируются командой, проекция догоняет их отдельной транзакцией.</p>
-            @if (loading()) { <p class="hint" role="status">Сравниваем модели в одном снимке…</p> }
+            @if (loading()) { <p class="hint" role="status">Сверяем проекцию с историей на её бизнес-версии…</p> }
             @if (error()) { <p class="notice error" role="alert">{{ error() }}</p> }
             @if (comparison(); as result) {
                 <div class="comparison-grid">
@@ -42,9 +42,9 @@ import { formatMoney } from '../shared/numbers';
                 <p class="notice" [class.success]="result.matches" [class.warning]="result.status === 'LAGGING'" [class.error]="!result.matches && result.status !== 'LAGGING'" role="status">
                     {{ result.matches ? 'Модели совпадают.' : result.status === 'LAGGING' ? 'Проекция догоняет.' : 'Ошибка целостности моделей.' }}
                 </p>
-                <p class="hint">Результат последнего согласованного снимка. Обновление выполняется автоматически и доступно по кнопке.</p>
+                <p class="hint">Последнее сравнение по бизнес-версиям; чтение моделей выполняется последовательно. Обновление выполняется автоматически и доступно по кнопке.</p>
             } @else if (!loading() && !error()) {
-                <p class="empty-small">{{ walletId() ? 'Ожидаем первый снимок обеих моделей.' : 'Выберите кошелёк.' }}</p>
+                <p class="empty-small">{{ walletId() ? 'Ожидаем первое сравнение моделей.' : 'Выберите кошелёк.' }}</p>
             }
         </section>
     `,
